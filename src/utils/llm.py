@@ -17,6 +17,7 @@ def call_llm(
     agent_name: Optional[str] = None,
     max_retries: int = 3,
     default_factory=None,
+    debug: bool = False,
 ) -> T:
     """
     Makes an LLM call with retry logic, handling both JSON supported and non-JSON supported models.
@@ -29,13 +30,39 @@ def call_llm(
         agent_name: Optional name of the agent for progress updates
         max_retries: Maximum number of retries (default: 3)
         default_factory: Optional factory function to create default response on failure
+        debug: Whether to print debug information about the API request
 
     Returns:
         An instance of the specified Pydantic model
     """
-
+    from src.llm.models import ModelProvider
+    
     model_info = get_model_info(model_name, model_provider)
-    llm = get_model(model_name, model_provider)
+    # Convert string to ModelProvider enum
+    provider_enum = ModelProvider(model_provider)
+    llm = get_model(model_name, provider_enum)
+
+    # Debug: Print API request information
+    if debug:
+        print(f"\n{'='*60}")
+        print(f"🔍 API REQUEST DEBUG INFO")
+        print(f"{'='*60}")
+        print(f"📍 Agent: {agent_name or 'Unknown'}")
+        print(f"🤖 Model: {model_name}")
+        print(f"🏢 Provider: {model_provider}")
+        print(f"📝 Pydantic Model: {pydantic_model.__name__}")
+        print(f"🔧 Has JSON Mode: {model_info.has_json_mode() if model_info else 'Unknown'}")
+        print(f"\n📨 PROMPT CONTENT:")
+        print(f"{'-'*40}")
+        if hasattr(prompt, 'messages'):
+            for i, message in enumerate(prompt.messages):
+                if hasattr(message, 'content'):
+                    print(f"Message {i+1} ({type(message).__name__}):")
+                    print(f"{message.content}")
+                    print(f"{'-'*40}")
+        else:
+            print(f"{prompt}")
+        print(f"{'='*60}\n")
 
     # For non-JSON support models, we can use structured output
     if not (model_info and not model_info.has_json_mode()):
@@ -50,6 +77,19 @@ def call_llm(
             # Call the LLM
             result = llm.invoke(prompt)
 
+            # Debug: Print API response information
+            if debug:
+                print(f"✅ API RESPONSE DEBUG INFO")
+                print(f"{'-'*40}")
+                print(f"🔄 Attempt: {attempt + 1}")
+                print(f"📤 Response Type: {type(result).__name__}")
+                if hasattr(result, 'content'):
+                    print(f"📝 Response Content (first 500 chars):")
+                    print(f"{str(result.content)[:500]}...")
+                else:
+                    print(f"📝 Response: {str(result)[:500]}...")
+                print(f"{'-'*40}\n")
+
             # For non-JSON support models, we need to extract and parse the JSON manually
             if model_info and not model_info.has_json_mode():
                 parsed_result = extract_json_from_response(result.content)
@@ -61,6 +101,13 @@ def call_llm(
         except Exception as e:
             if agent_name:
                 progress.update_status(agent_name, None, f"Error - retry {attempt + 1}/{max_retries}")
+
+            if debug:
+                print(f"❌ API ERROR DEBUG INFO")
+                print(f"{'-'*40}")
+                print(f"🔄 Attempt: {attempt + 1}/{max_retries}")
+                print(f"❌ Error: {str(e)}")
+                print(f"{'-'*40}\n")
 
             if attempt == max_retries - 1:
                 print(f"Error in LLM call after {max_retries} attempts: {e}")

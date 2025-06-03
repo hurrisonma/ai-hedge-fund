@@ -1,0 +1,63 @@
+# Git attributes file for AI Hedge Fund project
+
+# Text files should be normalized to LF line endings
+*.py text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.js text eol=lf
+*.ts text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.sh text eol=lf
+*.bat text eol=crlf
+
+# Data files should be treated as binary (no diff, no merge)
+*.csv binary
+*.pickle binary
+*.pkl binary
+*.h5 binary
+*.hdf5 binary
+*.parquet binary
+*.feather binary
+*.xlsx binary
+*.xls binary
+*.sqlite binary
+*.db binary
+
+# Model files are binary
+*.pth binary
+*.pt binary
+*.bin binary
+*.safetensors binary
+*.ckpt binary
+*.pb binary
+*.model binary
+
+# Images are binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.bmp binary
+*.tiff binary
+*.svg text
+*.pdf binary
+
+# Archives are binary
+*.zip binary
+*.tar binary
+*.gz binary
+*.bz2 binary
+*.7z binary
+
+# Jupyter notebooks - prefer text handling but with special rules
+*.ipynb text
+
+# Configuration files
+*.toml text eol=lf
+*.ini text eol=lf
+*.cfg text eol=lf
+*.conf text eol=lf 

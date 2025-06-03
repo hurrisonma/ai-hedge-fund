@@ -23,9 +23,11 @@ wheels/
 # Virtual Environment
 venv/
 ENV/
+.venv/
 
 # Environment Variables
 .env
+.env.*
 
 # IDE
 .idea/
@@ -39,15 +41,105 @@ ENV/
 # OS
 .DS_Store
 Thumbs.db
+*.tmp
+*.temp
 
-# graph
+# Data files - 数据文件（各种格式）
+*.csv
+*.json
+*.pickle
+*.pkl
+*.h5
+*.hdf5
+*.parquet
+*.feather
+*.xlsx
+*.xls
+*.sqlite
+*.db
+*.sql
+
+# Raw data directories - 原始数据目录
+experiments/data/raw/
+experiments/data/processed/
+data/raw/
+data/processed/
+data/binance/
+data/crypto/
+**/raw/
+**/processed/
+
+# Model files - 模型文件
+*.pth
+*.pt
+*.bin
+*.safetensors
+*.ckpt
+*.pb
+*.h5
+*.model
+experiments/outputs/models/
+models/saved/
+checkpoints/
+
+# Training outputs - 训练输出
+experiments/outputs/
+experiments/logs/
+logs/
+tensorboard/
+wandb/
+mlruns/
+*.log
+
+# Media files - 媒体文件
 *.png
-
-# Txt files
-*.txt
-
-# PDF files
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.tiff
+*.svg
 *.pdf
+*.eps
+
+# Documentation files - 文档文件（可选择性忽略）
+*.txt
+*.pdf
+*.doc
+*.docx
+
+# Jupyter Notebooks checkpoints - Jupyter检查点
+.ipynb_checkpoints/
+*.ipynb
+
+# Cache directories - 缓存目录
+.cache/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
 
 # Frontend
-node_modules
+node_modules/
+dist/
+build/
+*.lock
+package-lock.json
+pnpm-lock.yaml
+
+# System files
+*.pid
+*.seed
+*.pid.lock
+
+# Configuration overrides - 配置覆盖文件
+config.local.py
+settings.local.py
+*.local.*
+
+# Temporary directories - 临时目录
+tmp/
+temp/
+cache/
+downloads/

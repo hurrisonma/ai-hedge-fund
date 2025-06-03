@@ -1,7 +1,7 @@
 export interface ModelItem {
   display_name: string;
   model_name: string;
-  provider: "Anthropic" | "DeepSeek" | "Gemini" | "Groq" | "OpenAI";
+  provider: "Anthropic" | "DeepSeek" | "Gemini" | "Groq" | "OpenAI" | "SiliconFlow";
 }
 
 export const apiModels: ModelItem[] = [
@@ -69,6 +69,16 @@ export const apiModels: ModelItem[] = [
     "display_name": "o4 Mini",
     "model_name": "o4-mini",
     "provider": "OpenAI"
+  },
+  {
+    "display_name": "DeepSeek R1 Pro",
+    "model_name": "Pro/deepseek-ai/DeepSeek-R1",
+    "provider": "SiliconFlow"
+  },
+  {
+    "display_name": "Qwen3 32B",
+    "model_name": "Qwen/Qwen3-32B",
+    "provider": "SiliconFlow"
   }
 ];
 

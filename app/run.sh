@@ -226,7 +226,7 @@ start_services() {
     # Start backend
     print_status "Starting backend server..."
     cd backend
-    poetry run uvicorn main:app --reload > "$BACKEND_LOG" 2>&1 &
+    poetry run uvicorn main:app --reload --host 0.0.0.0 > "$BACKEND_LOG" 2>&1 &
     BACKEND_PID=$!
     cd ..
     

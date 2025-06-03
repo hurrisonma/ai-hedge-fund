@@ -88,5 +88,20 @@
     "display_name": "[openai] custom",
     "model_name": "-",
     "provider": "OpenAI"
+  },
+  {
+    "display_name": "[siliconflow] DeepSeek R1 Pro",
+    "model_name": "Pro/deepseek-ai/DeepSeek-R1",
+    "provider": "SiliconFlow"
+  },
+  {
+    "display_name": "[siliconflow] Qwen3 32B",
+    "model_name": "Qwen/Qwen3-32B",
+    "provider": "SiliconFlow"
+  },
+  {
+    "display_name": "[siliconflow] custom",
+    "model_name": "-",
+    "provider": "SiliconFlow"
   }
 ]

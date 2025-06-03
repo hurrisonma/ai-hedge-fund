@@ -1,0 +1,220 @@
+{
+	"folders": [
+		{
+			"name": "AI Hedge Fund",
+			"path": "."
+		}
+	],
+	"settings": {
+		"python.defaultInterpreterPath": "./venv/bin/python",
+		"python.poetryPath": "poetry",
+		"python.terminal.activateEnvironment": true,
+		"python.linting.enabled": true,
+		"python.linting.pylintEnabled": false,
+		"python.linting.flake8Enabled": true,
+		"python.linting.flake8Args": ["--max-line-length=420"],
+		"python.formatting.provider": "black",
+		"python.formatting.blackArgs": ["--line-length=420"],
+		"python.sortImports.args": ["--profile", "black"],
+		"editor.formatOnSave": true,
+		"editor.codeActionsOnSave": {
+			"source.organizeImports": "explicit"
+		},
+		"files.exclude": {
+			"**/__pycache__": true,
+			"**/*.pyc": true,
+			"**/.pytest_cache": true,
+			"**/node_modules": true,
+			"**/.git": false
+		},
+		"search.exclude": {
+			"**/node_modules": true,
+			"**/bower_components": true,
+			"**/*.code-search": true,
+			"**/__pycache__": true,
+			"**/.pytest_cache": true
+		},
+		"terminal.integrated.defaultProfile.linux": "bash",
+		"terminal.integrated.cwd": "${workspaceFolder}",
+		"docker.showStartPage": false,
+		"yaml.schemas": {
+			"https://raw.githubusercontent.com/compose-spec/compose-spec/master/schema/compose-spec.json": "docker-compose*.yml"
+		}
+	},
+	"extensions": {
+		"recommendations": [
+			"ms-python.python",
+			"ms-python.flake8",
+			"ms-python.black-formatter",
+			"ms-python.isort",
+			"ms-vscode.vscode-json",
+			"redhat.vscode-yaml",
+			"ms-azuretools.vscode-docker",
+			"github.copilot",
+			"github.copilot-chat",
+			"ms-python.debugpy",
+			"charliermarsh.ruff",
+			"ms-toolsai.jupyter",
+			"ms-toolsai.vscode-jupyter-cell-tags",
+			"ms-toolsai.vscode-jupyter-slideshow"
+		]
+	},
+	"tasks": {
+		"version": "2.0.0",
+		"tasks": [
+			{
+				"label": "Install Dependencies",
+				"type": "shell",
+				"command": "poetry",
+				"args": ["install"],
+				"group": "build",
+				"presentation": {
+					"echo": true,
+					"reveal": "always",
+					"focus": false,
+					"panel": "shared"
+				},
+				"problemMatcher": []
+			},
+			{
+				"label": "Run Hedge Fund",
+				"type": "shell",
+				"command": "poetry",
+				"args": ["run", "python", "src/main.py", "--ticker", "AAPL,MSFT,NVDA"],
+				"group": "test",
+				"presentation": {
+					"echo": true,
+					"reveal": "always",
+					"focus": false,
+					"panel": "shared"
+				},
+				"problemMatcher": []
+			},
+			{
+				"label": "Run Backtester",
+				"type": "shell",
+				"command": "poetry",
+				"args": ["run", "python", "src/backtester.py", "--ticker", "AAPL,MSFT,NVDA"],
+				"group": "test",
+				"presentation": {
+					"echo": true,
+					"reveal": "always",
+					"focus": false,
+					"panel": "shared"
+				},
+				"problemMatcher": []
+			},
+			{
+				"label": "Format Code",
+				"type": "shell",
+				"command": "poetry",
+				"args": ["run", "black", "src/", "app/"],
+				"group": "build",
+				"presentation": {
+					"echo": true,
+					"reveal": "always",
+					"focus": false,
+					"panel": "shared"
+				},
+				"problemMatcher": []
+			},
+			{
+				"label": "Sort Imports",
+				"type": "shell",
+				"command": "poetry",
+				"args": ["run", "isort", "src/", "app/"],
+				"group": "build",
+				"presentation": {
+					"echo": true,
+					"reveal": "always",
+					"focus": false,
+					"panel": "shared"
+				},
+				"problemMatcher": []
+			},
+			{
+				"label": "Lint Code",
+				"type": "shell",
+				"command": "poetry",
+				"args": ["run", "flake8", "src/", "app/"],
+				"group": "test",
+				"presentation": {
+					"echo": true,
+					"reveal": "always",
+					"focus": false,
+					"panel": "shared"
+				},
+				"problemMatcher": []
+			},
+			{
+				"label": "Run Tests",
+				"type": "shell",
+				"command": "poetry",
+				"args": ["run", "pytest"],
+				"group": "test",
+				"presentation": {
+					"echo": true,
+					"reveal": "always",
+					"focus": false,
+					"panel": "shared"
+				},
+				"problemMatcher": []
+			},
+			{
+				"label": "Docker Build",
+				"type": "shell",
+				"command": "./run.sh",
+				"args": ["build"],
+				"group": "build",
+				"presentation": {
+					"echo": true,
+					"reveal": "always",
+					"focus": false,
+					"panel": "shared"
+				},
+				"problemMatcher": []
+			},
+			{
+				"label": "Docker Up",
+				"type": "shell",
+				"command": "docker-compose",
+				"args": ["up", "-d"],
+				"group": "build",
+				"presentation": {
+					"echo": true,
+					"reveal": "always",
+					"focus": false,
+					"panel": "shared"
+				},
+				"problemMatcher": []
+			}
+		]
+	},
+	"launch": {
+		"version": "0.2.0",
+		"configurations": [
+			{
+				"name": "Debug Main",
+				"type": "python",
+				"request": "launch",
+				"program": "${workspaceFolder}/src/main.py",
+				"args": ["--ticker", "AAPL", "--show-reasoning"],
+				"console": "integratedTerminal",
+				"cwd": "${workspaceFolder}",
+				"env": {},
+				"envFile": "${workspaceFolder}/.env"
+			},
+			{
+				"name": "Debug Backtester",
+				"type": "python",
+				"request": "launch",
+				"program": "${workspaceFolder}/src/backtester.py",
+				"args": ["--ticker", "AAPL"],
+				"console": "integratedTerminal",
+				"cwd": "${workspaceFolder}",
+				"env": {},
+				"envFile": "${workspaceFolder}/.env"
+			}
+		]
+	}
+} 

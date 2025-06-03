@@ -22,25 +22,25 @@ export function TextInputNode({
 }: NodeProps<TextInputNode>) {
   const [tickers, setTickers] = useState('');
   const [selectedModel, setSelectedModel] = useState<ModelItem | null>(defaultModel);
-  
+
   // Calculate default dates
   const today = new Date();
   const threeMonthsAgo = new Date(today);
   threeMonthsAgo.setMonth(today.getMonth() - 3);
-  
+
   const [startDate, setStartDate] = useState(threeMonthsAgo.toISOString().split('T')[0]);
   const [endDate, setEndDate] = useState(today.toISOString().split('T')[0]);
-  
+
   const nodeContext = useNodeContext();
   const { resetAllNodes, agentNodeData } = nodeContext;
   const { getNodes, getEdges } = useReactFlow();
   const abortControllerRef = useRef<(() => void) | null>(null);
-  
+
   // Check if any agent is in progress
   const isProcessing = Object.values(agentNodeData).some(
     agent => agent.status === 'IN_PROGRESS'
   );
-  
+
   // Clean up SSE connection on unmount
   useEffect(() => {
     return () => {
@@ -49,7 +49,7 @@ export function TextInputNode({
       }
     };
   }, []);
-  
+
   const handleTickersChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setTickers(e.target.value);
   };
@@ -65,23 +65,23 @@ export function TextInputNode({
   const handlePlay = () => {
     // First, reset all nodes to IDLE
     resetAllNodes();
-    
+
     // Clean up any existing connection
     if (abortControllerRef.current) {
       abortControllerRef.current();
     }
-    
+
     // Call the backend API with SSE
     const tickerList = tickers.split(',').map(t => t.trim());
-    
+
     // Get the nodes and edges
     const nodes = getNodes();
     const edges = getEdges();
     const connectedEdges = getConnectedEdges(nodes, edges);
-    
+
     // Get all nodes that are agents and are connected in the flow
     const selectedAgents = new Set<string>();
-    
+
     // First, collect all the target node IDs from connected edges
     const connectedNodeIds = new Set<string>();
     connectedEdges.forEach(edge => {
@@ -89,14 +89,14 @@ export function TextInputNode({
         connectedNodeIds.add(edge.target);
       }
     });
-    
+
     // Then filter for nodes that are agents
     nodes.forEach(node => {
       if (node.type === 'agent-node' && connectedNodeIds.has(node.id)) {
         selectedAgents.add(node.id);
       }
     });
-        
+
     abortControllerRef.current = api.runHedgeFund(
       {
         tickers: tickerList,
@@ -142,8 +142,8 @@ export function TextInputNode({
                     value={tickers}
                     onChange={handleTickersChange}
                   />
-                  <Button 
-                    size="icon" 
+                  <Button
+                    size="icon"
                     variant="secondary"
                     className="flex-shrink-0 transition-all duration-200 hover:bg-primary hover:text-primary-foreground active:scale-95"
                     onClick={handlePlay}
@@ -175,7 +175,7 @@ export function TextInputNode({
                   </AccordionTrigger>
                   <AccordionContent className="pt-2">
                     <div className="flex flex-col gap-4">
-                    <div className="flex flex-col gap-2">
+                      <div className="flex flex-col gap-2">
                         <div className="text-subtitle text-muted-foreground flex items-center gap-1">
                           End Date
                         </div>

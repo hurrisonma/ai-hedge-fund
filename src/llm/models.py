@@ -21,6 +21,7 @@ class ModelProvider(str, Enum):
     GROQ = "Groq"
     OPENAI = "OpenAI"
     OLLAMA = "Ollama"
+    SILICONFLOW = "SiliconFlow"
 
 
 class LLMModel(BaseModel):
@@ -139,6 +140,17 @@ def get_model(model_name: str, model_provider: ModelProvider) -> ChatOpenAI | Ch
             print(f"API Key Error: Please make sure GOOGLE_API_KEY is set in your .env file.")
             raise ValueError("Google API key not found.  Please make sure GOOGLE_API_KEY is set in your .env file.")
         return ChatGoogleGenerativeAI(model=model_name, api_key=api_key)
+    elif model_provider == ModelProvider.SILICONFLOW:
+        api_key = os.getenv("SILICONFLOW_API_KEY")
+        base_url = os.getenv("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1")
+        if not api_key:
+            print(f"API Key Error: Please make sure SILICONFLOW_API_KEY is set in your .env file.")
+            raise ValueError("SiliconFlow API key not found.  Please make sure SILICONFLOW_API_KEY is set in your .env file.")
+        return ChatOpenAI(
+            model=model_name,
+            api_key=api_key,
+            base_url=base_url
+        )
     elif model_provider == ModelProvider.OLLAMA:
         # For Ollama, we use a base URL instead of an API key
         # Check if OLLAMA_HOST is set (for Docker on macOS)
