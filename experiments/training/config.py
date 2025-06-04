@@ -82,7 +82,7 @@ class ExperimentConfig:
     
     # 时间窗口设置
     sequence_length: int = 30  # 输入30分钟历史数据
-    prediction_horizons: List[int] = field(default_factory=lambda: [5, 10, 15])  # 预测5、10、15分钟
+    prediction_horizons: List[int] = field(default_factory=lambda: [5])  # 只预测5分钟，专注短期
     
     # 数据分割比例
     train_ratio: float = 0.8   # 80%训练
@@ -156,14 +156,12 @@ class ExperimentConfig:
     # 类别权重 (用于处理不平衡数据) - 稳定性检测二分类
     class_weights: List[float] = field(default_factory=lambda: [
         1.0,   # 稳定类权重（多数类）
-        8.0,   # 偏离类权重（少数类，适度提高）
+        7.0,   # 偏离类权重（少数类，从5.0调整到7.0）
     ])
     
     # 多任务损失权重
     task_weights: Dict[str, float] = field(default_factory=lambda: {
-        '5min': 0.5,   # 5分钟预测权重
-        '10min': 0.3,  # 10分钟预测权重
-        '15min': 0.2   # 15分钟预测权重
+        '5min': 1.0,   # 5分钟预测权重 - 100%专注
     })
     
     # ========== 输出设置 ==========
@@ -184,11 +182,11 @@ class ExperimentConfig:
     
     # ========== 评估设置 ==========
     # 简化评估策略（稳定性检测）
-    evaluation_strategy: str = "traditional"  # 使用传统准确率评估
+    evaluation_strategy: str = "trading_aware"  # 改为交易感知评估
     
     # 核心评估指标（稳定性检测）
-    primary_metric: str = "accuracy"  # 主指标：分类准确率
-    secondary_metric: str = "precision"  # 次要指标：精确率
+    primary_metric: str = "balanced_class_accuracy"  # 主指标：平衡类别准确率
+    secondary_metric: str = "change_accuracy"        # 次要指标：变化类准确率
     
     # 简化评估指标
     evaluation_metrics: List[str] = field(default_factory=lambda: [
@@ -196,25 +194,101 @@ class ExperimentConfig:
         'precision',          # 精确率
         'recall',             # 召回率
         'f1_score',           # F1分数
-        'confusion_matrix'    # 混淆矩阵
+        'confusion_matrix',   # 混淆矩阵
+        'balanced_class_accuracy',  # 平衡类别准确率（核心指标）
+        'stable_accuracy',    # 稳定类准确率
+        'change_accuracy',    # 变化类准确率（关键）
+        'catastrophic_error_rate'   # 灾难性错误率
     ])
     
-    # 早停配置（基于准确率）
-    early_stopping_metric: str = "accuracy"  # 基于准确率早停
-    early_stopping_mode: str = "maximize"    # 最大化模式
-    early_stopping_patience: int = 10        # 早停耐心
-    early_stopping_min_delta: float = 0.001  # 最小改进阈值
+    # 早停配置（基于综合评分）
+    early_stopping_metric: str = "composite_score"   # 使用综合评分
+    early_stopping_mode: str = "maximize"            # 最大化模式
+    early_stopping_patience: int = 15                # 增加耐心到15轮
+    early_stopping_min_delta: float = 0.005          # 降低最小改进阈值到0.5%
     
-    # 模型保存策略（简化）
-    save_multiple_models: bool = False
+    # 类别准确率权重配置（重点关注变化类）
+    class_accuracy_weights: Dict[str, float] = field(default_factory=lambda: {
+        'stable_weight': 0.25,    # 稳定类准确率权重25%（降低）
+        'change_weight': 0.75,    # 变化类准确率权重75%（提高）
+    })
+    
+    # 🎯 新增：模型失败检测标准
+    model_failure_criteria: Dict[str, float] = field(default_factory=lambda: {
+        'min_change_accuracy': 0.15,      # 变化类准确率最低15%
+        'min_stable_accuracy': 0.40,      # 稳定类准确率最低40%
+        'min_balanced_accuracy': 0.30,    # 平衡准确率最低30%
+        'max_catastrophic_rate': 0.05,    # 灾难错误率最高5%
+    })
+    
+    # 🎯 新增：综合评分权重配置
+    composite_score_weights: Dict[str, float] = field(default_factory=lambda: {
+        'balanced_class_accuracy': 0.50,      # 50%权重：平衡准确率
+        'catastrophic_control': 0.30,         # 30%权重：控制极端错误
+        'f1_score': 0.20,                     # 20%权重：F1综合指标
+    })
+    
+    # 🎯 新增：多指标早停配置
+    multi_metric_early_stopping: Dict[str, Any] = field(default_factory=lambda: {
+        'enabled': True,
+        'patience': 12,                        # 12轮耐心
+        'min_improvement_threshold': 0.003,    # 0.3%最小改进
+        'change_accuracy_decline_limit': -0.05, # 变化类准确率下降限制5%
+        'stable_trend_window': 8,              # 趋势判断窗口8轮
+    })
+    
+    # 模型保存策略（基于综合评分）
+    save_multiple_models: bool = True
     model_save_criteria: Dict[str, str] = field(default_factory=lambda: {
-        'best_model.pth': 'accuracy'  # 最佳准确率模型
+        'best_composite.pth': 'composite_score',              # 最佳综合评分模型
+        'best_balanced.pth': 'balanced_class_accuracy',       # 最佳平衡准确率模型
+        'best_change.pth': 'change_accuracy',                 # 最佳变化类准确率模型
     })
 
     # ========== 损失函数配置 ==========
     # 使用标准二分类损失函数
     use_trading_aware_loss: bool = False  # 使用简单二分类交叉熵损失
     use_binary_classification: bool = True  # 确保二分类模式
+    
+    # 🧪 新增：损失函数类型选择
+    loss_function_type: str = "binary_cross_entropy"  # 损失函数类型
+    # 可选值：
+    # - "binary_cross_entropy": 标准二分类交叉熵（当前默认）
+    # - "probability_adjusted": 基础概率调整损失
+    # - "confidence_weighted": 置信度动态权重损失  
+    # - "business_cost": 业务成本驱动损失
+    # - "imbalanced_focal": 改进Focal Loss
+    
+    # 各种损失函数的专用参数
+    loss_function_params: Dict[str, Any] = field(default_factory=lambda: {
+        # 基础概率调整损失参数
+        "probability_adjusted": {
+            "base_stable_prob": 0.95,   # 稳定类基础概率
+            "base_change_prob": 0.05,   # 变化类基础概率
+        },
+        
+        # 置信度动态权重损失参数
+        "confidence_weighted": {
+            "confidence_threshold": 0.8,      # 高置信度阈值
+            "high_conf_correct_weight": 0.3,  # 高置信度正确预测权重
+            "high_conf_wrong_weight": 3.0,    # 高置信度错误预测权重
+            "low_conf_weight": 1.0,           # 低置信度权重
+        },
+        
+        # 业务成本驱动损失参数
+        "business_cost": {
+            "false_alarm_cost": 1.0,    # 误报成本(稳定->变化)
+            "miss_change_cost": 8.0,    # 漏报成本(变化->稳定)
+            "correct_reward": 0.2,      # 正确预测奖励
+        },
+        
+        # 改进Focal Loss参数
+        "imbalanced_focal": {
+            "alpha": 0.25,              # 类别平衡因子
+            "gamma": 2.0,               # 聚焦因子
+            "dynamic_adjustment": True,  # 是否动态调整参数
+        },
+    })
     
     def __post_init__(self):
         """初始化后的验证和设置"""

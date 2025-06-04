@@ -431,6 +431,278 @@ class MultiTaskLoss(nn.Module):
         losses['total_loss'] = total_loss
         return losses
 
+class ProbabilityAdjustedLoss(nn.Module):
+    """方案1: 基于基础概率调整的损失函数
+    
+    核心思想：考虑类别的基础分布概率，调整损失权重
+    - 稳定类基础概率很高(95%)，预测稳定不应该得到太多奖励
+    - 变化类基础概率很低(5%)，正确预测变化应该得到更多奖励
+    """
+    
+    def __init__(self, task_weights: Dict[str, float], 
+                 base_stable_prob: float = 0.95,
+                 base_change_prob: float = 0.05):
+        super().__init__()
+        self.task_weights = task_weights
+        self.base_stable_prob = base_stable_prob
+        self.base_change_prob = base_change_prob
+        
+    def forward(self, predictions: Dict[str, torch.Tensor], 
+                targets: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        """基础概率调整损失计算"""
+        losses = {}
+        total_loss = 0.0
+        
+        for task_name, pred_logits in predictions.items():
+            if task_name not in targets:
+                continue
+                
+            target_labels = targets[task_name]
+            pred_probs = F.softmax(pred_logits, dim=1)
+            
+            batch_losses = []
+            for i, (pred, true) in enumerate(zip(pred_probs, target_labels)):
+                if true == 0:  # 稳定类
+                    # 计算超出基础概率的部分
+                    excess_prob = max(0, pred[0].item() - self.base_stable_prob)
+                    adjustment = excess_prob / (1 - self.base_stable_prob) if (1 - self.base_stable_prob) > 0 else 0
+                    # 调整权重：预测概率超出基础概率时减少惩罚
+                    weight = max(0.1, 1.0 - adjustment * 0.5)
+                    loss = -weight * torch.log(pred[0] + 1e-8)
+                else:  # 变化类
+                    # 变化类预测正确时给予奖励
+                    excess_prob = max(0, pred[1].item() - self.base_change_prob)
+                    adjustment = excess_prob / (1 - self.base_change_prob) if (1 - self.base_change_prob) > 0 else 0
+                    # 预测概率超出基础概率时减少惩罚，否则重惩罚
+                    weight = max(0.5, 2.0 - adjustment)
+                    loss = -weight * torch.log(pred[1] + 1e-8)
+                
+                batch_losses.append(loss)
+            
+            task_loss = torch.stack(batch_losses).mean()
+            task_weight = self.task_weights.get(task_name, 1.0)
+            weighted_loss = task_weight * task_loss
+            
+            losses[f'loss_{task_name}'] = task_loss
+            total_loss += weighted_loss
+        
+        losses['total_loss'] = total_loss
+        return losses
+
+
+class ConfidenceWeightedLoss(nn.Module):
+    """方案2: 基于预测置信度的动态权重损失函数
+    
+    核心思想：根据模型的预测置信度动态调整损失权重
+    - 高置信度预测错误：重惩罚
+    - 高置信度预测正确：小惩罚  
+    - 低置信度：中等惩罚，鼓励模型提高置信度
+    """
+    
+    def __init__(self, task_weights: Dict[str, float],
+                 confidence_threshold: float = 0.8,
+                 high_conf_correct_weight: float = 0.3,
+                 high_conf_wrong_weight: float = 3.0,
+                 low_conf_weight: float = 1.0):
+        super().__init__()
+        self.task_weights = task_weights
+        self.confidence_threshold = confidence_threshold
+        self.high_conf_correct_weight = high_conf_correct_weight
+        self.high_conf_wrong_weight = high_conf_wrong_weight
+        self.low_conf_weight = low_conf_weight
+        
+    def forward(self, predictions: Dict[str, torch.Tensor], 
+                targets: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        """置信度动态权重损失计算"""
+        losses = {}
+        total_loss = 0.0
+        
+        for task_name, pred_logits in predictions.items():
+            if task_name not in targets:
+                continue
+                
+            target_labels = targets[task_name]
+            pred_probs = F.softmax(pred_logits, dim=1)
+            
+            batch_losses = []
+            for i, (pred, true) in enumerate(zip(pred_probs, target_labels)):
+                confidence = torch.max(pred)  # 最高概率作为置信度
+                pred_class = torch.argmax(pred)
+                
+                # 根据置信度和正确性确定权重
+                if confidence > self.confidence_threshold:
+                    if pred_class == true:
+                        # 高置信度且预测正确：小惩罚
+                        weight = self.high_conf_correct_weight
+                    else:
+                        # 高置信度但预测错误：大惩罚
+                        weight = self.high_conf_wrong_weight
+                        # 变化类预测错误时额外惩罚
+                        if true == 1:
+                            weight *= 2.0
+                else:
+                    # 低置信度：中等惩罚
+                    weight = self.low_conf_weight
+                
+                loss = -weight * torch.log(pred[true] + 1e-8)
+                batch_losses.append(loss)
+            
+            task_loss = torch.stack(batch_losses).mean()
+            task_weight = self.task_weights.get(task_name, 1.0)
+            weighted_loss = task_weight * task_loss
+            
+            losses[f'loss_{task_name}'] = task_loss
+            total_loss += weighted_loss
+        
+        losses['total_loss'] = total_loss
+        return losses
+
+
+class BusinessCostLoss(nn.Module):
+    """方案3: 基于业务成本的损失函数
+    
+    核心思想：直接根据业务场景中不同错误的成本来设计损失
+    - 稳定误判为变化：导致不必要的交易，成本较低
+    - 变化误判为稳定：错过交易机会，成本较高
+    """
+    
+    def __init__(self, task_weights: Dict[str, float],
+                 false_alarm_cost: float = 1.0,    # 误报成本(稳定->变化)
+                 miss_change_cost: float = 5.0,    # 漏报成本(变化->稳定)
+                 correct_reward: float = 0.1):     # 正确预测奖励
+        super().__init__()
+        self.task_weights = task_weights
+        self.false_alarm_cost = false_alarm_cost
+        self.miss_change_cost = miss_change_cost
+        self.correct_reward = correct_reward
+        
+        # 成本矩阵: [真实标签][预测标签]
+        self.cost_matrix = torch.tensor([
+            [0.0, false_alarm_cost],     # 真稳定: [预测稳定, 预测变化]
+            [miss_change_cost, 0.0]      # 真变化: [预测稳定, 预测变化]
+        ])
+        
+    def forward(self, predictions: Dict[str, torch.Tensor], 
+                targets: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        """业务成本驱动损失计算"""
+        losses = {}
+        total_loss = 0.0
+        
+        for task_name, pred_logits in predictions.items():
+            if task_name not in targets:
+                continue
+                
+            target_labels = targets[task_name]
+            pred_probs = F.softmax(pred_logits, dim=1)
+            
+            # 确保成本矩阵在正确的设备上
+            cost_matrix = self.cost_matrix.to(pred_logits.device)
+            
+            batch_losses = []
+            for i, (pred, true) in enumerate(zip(pred_probs, target_labels)):
+                pred_class = torch.argmax(pred)
+                
+                if true == pred_class:
+                    # 预测正确：小损失，鼓励高置信度
+                    loss = -self.correct_reward * torch.log(pred[true] + 1e-8)
+                else:
+                    # 预测错误：按业务成本加权
+                    cost = cost_matrix[true, pred_class]
+                    # 结合交叉熵损失和业务成本
+                    base_loss = -torch.log(pred[true] + 1e-8)
+                    loss = cost * base_loss
+                
+                batch_losses.append(loss)
+            
+            task_loss = torch.stack(batch_losses).mean()
+            task_weight = self.task_weights.get(task_name, 1.0)
+            weighted_loss = task_weight * task_loss
+            
+            losses[f'loss_{task_name}'] = task_loss
+            total_loss += weighted_loss
+        
+        losses['total_loss'] = total_loss
+        return losses
+
+
+class ImbalancedFocalLoss(nn.Module):
+    """方案4: 针对极度不平衡数据的改进Focal Loss
+    
+    核心思想：Focal Loss + 类别平衡 + 动态难度权重
+    - alpha: 类别平衡因子，解决类别不平衡
+    - gamma: 聚焦因子，关注困难样本
+    - 动态调整：根据训练进度调整参数
+    """
+    
+    def __init__(self, task_weights: Dict[str, float],
+                 alpha: float = 0.25,          # 类别平衡因子
+                 gamma: float = 2.0,           # 聚焦因子
+                 dynamic_adjustment: bool = True):
+        super().__init__()
+        self.task_weights = task_weights
+        self.alpha = alpha
+        self.gamma = gamma
+        self.dynamic_adjustment = dynamic_adjustment
+        self.training_step = 0
+        
+    def forward(self, predictions: Dict[str, torch.Tensor], 
+                targets: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        """改进Focal Loss计算"""
+        losses = {}
+        total_loss = 0.0
+        
+        # 动态调整参数（可选）
+        if self.dynamic_adjustment:
+            # 训练初期更关注平衡，后期更关注困难样本
+            dynamic_alpha = max(0.1, self.alpha - self.training_step * 0.0001)
+            dynamic_gamma = min(3.0, self.gamma + self.training_step * 0.0001)
+        else:
+            dynamic_alpha = self.alpha
+            dynamic_gamma = self.gamma
+        
+        for task_name, pred_logits in predictions.items():
+            if task_name not in targets:
+                continue
+                
+            target_labels = targets[task_name]
+            pred_probs = F.softmax(pred_logits, dim=1)
+            
+            batch_losses = []
+            for i, (pred, true) in enumerate(zip(pred_probs, target_labels)):
+                pt = pred[true]  # 正确类别的预测概率
+                
+                # 类别平衡权重
+                if true == 0:  # 稳定类
+                    alpha_t = 1 - dynamic_alpha  # 给多数类较小权重
+                else:  # 变化类
+                    alpha_t = dynamic_alpha      # 给少数类较大权重
+                
+                # Focal权重：(1-pt)^gamma，困难样本权重大
+                focal_weight = torch.pow(1 - pt, dynamic_gamma)
+                
+                # 综合损失
+                loss = -alpha_t * focal_weight * torch.log(pt + 1e-8)
+                
+                # 额外的变化类激励
+                if true == 1:
+                    loss *= 1.5  # 变化类额外1.5倍权重
+                
+                batch_losses.append(loss)
+            
+            task_loss = torch.stack(batch_losses).mean()
+            task_weight = self.task_weights.get(task_name, 1.0)
+            weighted_loss = task_weight * task_loss
+            
+            losses[f'loss_{task_name}'] = task_loss
+            total_loss += weighted_loss
+        
+        losses['total_loss'] = total_loss
+        
+        # 更新训练步数
+        self.training_step += 1
+        
+        return losses
+
 def create_model(config: Dict) -> MarketTransformer:
     """
     创建模型工厂函数

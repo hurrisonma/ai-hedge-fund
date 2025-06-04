@@ -28,8 +28,9 @@ from models.transformer import (  # noqa: E402
     MultiTaskLoss,
     TradingAwareLoss,
 )
+
 from training.config import ExperimentConfig  # noqa: E402
-from training.data_loader import create_sample_data, KLineDataProcessor  # noqa: E402
+from training.data_loader import KLineDataProcessor, create_sample_data  # noqa: E402
 
 warnings.filterwarnings('ignore')
 
@@ -173,13 +174,68 @@ class DeepLearningExperiment:
 
         # 损失函数
         if self.config.use_binary_classification:
-            # 二分类模式：使用配置的类别权重
-            binary_class_weights = torch.FloatTensor(
-                self.config.class_weights
-            ).to(self.device)
-            self.criterion = BinaryClassificationLoss(
-                self.config.task_weights, binary_class_weights
-            )
+            # 根据配置选择损失函数类型
+            loss_type = self.config.loss_function_type
+            task_weights = self.config.task_weights
+            
+            if loss_type == "binary_cross_entropy":
+                # 标准二分类交叉熵（默认）
+                binary_class_weights = torch.FloatTensor(
+                    self.config.class_weights
+                ).to(self.device)
+                self.criterion = BinaryClassificationLoss(
+                    task_weights, binary_class_weights
+                )
+                
+            elif loss_type == "probability_adjusted":
+                # 基础概率调整损失
+                from models.transformer import ProbabilityAdjustedLoss
+                params = self.config.loss_function_params["probability_adjusted"]
+                self.criterion = ProbabilityAdjustedLoss(
+                    task_weights,
+                    base_stable_prob=params["base_stable_prob"],
+                    base_change_prob=params["base_change_prob"]
+                )
+                
+            elif loss_type == "confidence_weighted":
+                # 置信度动态权重损失
+                from models.transformer import ConfidenceWeightedLoss
+                params = self.config.loss_function_params["confidence_weighted"]
+                self.criterion = ConfidenceWeightedLoss(
+                    task_weights,
+                    confidence_threshold=params["confidence_threshold"],
+                    high_conf_correct_weight=params["high_conf_correct_weight"],
+                    high_conf_wrong_weight=params["high_conf_wrong_weight"],
+                    low_conf_weight=params["low_conf_weight"]
+                )
+                
+            elif loss_type == "business_cost":
+                # 业务成本驱动损失
+                from models.transformer import BusinessCostLoss
+                params = self.config.loss_function_params["business_cost"]
+                self.criterion = BusinessCostLoss(
+                    task_weights,
+                    false_alarm_cost=params["false_alarm_cost"],
+                    miss_change_cost=params["miss_change_cost"],
+                    correct_reward=params["correct_reward"]
+                )
+                
+            elif loss_type == "imbalanced_focal":
+                # 改进Focal Loss
+                from models.transformer import ImbalancedFocalLoss
+                params = self.config.loss_function_params["imbalanced_focal"]
+                self.criterion = ImbalancedFocalLoss(
+                    task_weights,
+                    alpha=params["alpha"],
+                    gamma=params["gamma"],
+                    dynamic_adjustment=params["dynamic_adjustment"]
+                )
+                
+            else:
+                raise ValueError(f"未知的损失函数类型: {loss_type}")
+                
+            print(f"📊 使用损失函数: {loss_type}")
+            
         else:
             # 三分类模式：使用原有逻辑
             class_weights = torch.FloatTensor(
@@ -280,74 +336,31 @@ class DeepLearningExperiment:
         return avg_loss, avg_accuracy, accuracies
 
     def validate_epoch(self):
-        """验证一个epoch - 使用简单二分类评估"""
+        """验证一个epoch - 使用交易感知评估"""
         self.model.eval()
         total_loss = 0.0
-        all_predictions = {
-            f'{h}min': [] for h in self.config.prediction_horizons
-        }
-        all_labels = {
-            f'{h}min': [] for h in self.config.prediction_horizons
-        }
+        
+        # 收集预测结果
+        all_predictions = {f'{h}min': [] for h in self.config.prediction_horizons}
+        all_labels = {f'{h}min': [] for h in self.config.prediction_horizons}
+        all_probabilities = {f'{h}min': [] for h in self.config.prediction_horizons}
 
         with torch.no_grad():
-            for batch_idx, (features, labels) in enumerate(self.val_loader):
-                # 数据移到设备
+            for features, batch_labels in self.val_loader:
                 features = features.to(self.device)
-                batch_labels = {}
-                for horizon, label_tensor in labels.items():
-                    batch_labels[horizon] = label_tensor.squeeze().to(
-                        self.device
-                    )
-
-                # 检查批次是否为空
-                if features.size(0) == 0:
-                    print(f"⚠️  警告: 批次 {batch_idx} 特征为空，跳过")
-                    continue
-
-                # 检查标签是否为空或尺寸不匹配
-                skip_batch = False
-                for horizon_key, label_tensor in batch_labels.items():
-                    # 使用numel()检查张量是否为空，处理0维张量
-                    if label_tensor.numel() == 0:
-                        print(
-                            f"⚠️  警告: 批次 {batch_idx} {horizon_key} "
-                            f"标签为空，跳过此批次"
-                        )
-                        skip_batch = True
-                        break
-                    # 检查维度匹配
-                    if (len(label_tensor.shape) == 0 or
-                            label_tensor.shape[0] != features.shape[0]):
-                        print(
-                            f"⚠️  警告: 批次 {batch_idx} {horizon_key} "
-                            f"尺寸不匹配"
-                        )
-                        print(
-                            f"    特征形状: {features.shape}, "
-                            f"标签形状: {label_tensor.shape}"
-                        )
-                        skip_batch = True
-                        break
-
-                if skip_batch:
-                    continue
-
-                # 前向传播
+                
+                # 🔧 修复：确保标签也移动到正确设备
+                labels_on_device = {}
+                for horizon, label_tensor in batch_labels.items():
+                    labels_on_device[horizon] = label_tensor.squeeze().to(self.device)
+                
+                # 计算损失
                 predictions = self.model(features)
+                batch_loss = self.criterion(predictions, labels_on_device)
+                total_loss += batch_loss['total_loss'].item()
 
-                # 额外的安全检查
-                try:
-                    losses = self.criterion(predictions, batch_labels)
-                    total_loss += losses['total_loss'].item()
-                except Exception as e:
-                    print(f"❌ 批次 {batch_idx} 损失计算失败: {e}")
-                    print(f"    特征形状: {features.shape}")
-                    for k, v in batch_labels.items():
-                        print(f"    {k} 标签形状: {v.shape}")
-                    for k, v in predictions.items():
-                        print(f"    {k} 预测形状: {v.shape}")
-                    raise
+                # 获取预测概率
+                probabilities = self.model.predict_proba(features)
 
                 # 收集预测结果
                 for horizon in self.config.prediction_horizons:
@@ -357,15 +370,19 @@ class DeepLearningExperiment:
                         pred_labels.cpu().numpy()
                     )
                     all_labels[horizon_key].extend(
-                        batch_labels[horizon_key].cpu().numpy()
+                        labels_on_device[horizon_key].cpu().numpy()
+                    )
+                    all_probabilities[horizon_key].extend(
+                        probabilities[horizon_key].cpu().numpy()
                     )
 
-        # 计算简单二分类评估指标
+        # 计算交易感知评估指标
         avg_loss = total_loss / len(self.val_loader)
 
         # 对每个时间尺度计算指标
         from sklearn.metrics import (
             accuracy_score,
+            confusion_matrix,
             f1_score,
             precision_score,
             recall_score,
@@ -376,6 +393,7 @@ class DeepLearningExperiment:
             horizon_key = f'{horizon}min'
             y_true = np.array(all_labels[horizon_key])
             y_pred = np.array(all_predictions[horizon_key])
+            y_proba = np.array(all_probabilities[horizon_key])
 
             # 计算基础分类指标
             accuracy = accuracy_score(y_true, y_pred)
@@ -383,11 +401,53 @@ class DeepLearningExperiment:
             recall = recall_score(y_true, y_pred, average='weighted', zero_division=0)
             f1 = f1_score(y_true, y_pred, average='weighted', zero_division=0)
             
+            # 计算混淆矩阵用于类别准确率
+            cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
+            
+            # 计算各类别准确率（召回率）
+            stable_accuracy = cm[0, 0] / (cm[0, 0] + cm[0, 1]) if (cm[0, 0] + cm[0, 1]) > 0 else 0.0  # 稳定类准确率
+            change_accuracy = cm[1, 1] / (cm[1, 0] + cm[1, 1]) if (cm[1, 0] + cm[1, 1]) > 0 else 0.0  # 变化类准确率
+            
+            # 🎯 计算灾难性错误率（方向完全相反）
+            catastrophic_errors = 0  # 二分类中，两个类别互相误判都算灾难性错误
+            total_samples = len(y_true)
+            if total_samples > 0:
+                false_positives = cm[0, 1]  # 稳定误判为变化
+                false_negatives = cm[1, 0]  # 变化误判为稳定
+                catastrophic_errors = false_positives + false_negatives
+                catastrophic_error_rate = catastrophic_errors / total_samples
+            else:
+                catastrophic_error_rate = 0.0
+            
+            # 计算平衡类别准确率
+            balanced_class_accuracy = (
+                self.config.class_accuracy_weights['stable_weight'] * stable_accuracy +
+                self.config.class_accuracy_weights['change_weight'] * change_accuracy
+            )
+            
+            # 🎯 计算综合评分
+            composite_score = self._calculate_composite_score(
+                balanced_class_accuracy, catastrophic_error_rate, f1
+            )
+            
+            # 🎯 检测模型是否失败
+            is_failed = self._check_model_failure(
+                change_accuracy, stable_accuracy, balanced_class_accuracy, catastrophic_error_rate
+            )
+            
             evaluation_results[horizon_key] = {
                 'accuracy': accuracy,
                 'precision': precision,
                 'recall': recall,
-                'f1_score': f1
+                'f1_score': f1,
+                'stable_accuracy': stable_accuracy,
+                'change_accuracy': change_accuracy,
+                'balanced_class_accuracy': balanced_class_accuracy,
+                'catastrophic_error_rate': catastrophic_error_rate,
+                'composite_score': composite_score,
+                'is_failed_model': is_failed,
+                'confusion_matrix': cm,
+                'probabilities': y_proba
             }
 
         # 计算平均指标
@@ -400,6 +460,15 @@ class DeepLearningExperiment:
         avg_f1 = np.mean([
             results['f1_score'] for results in evaluation_results.values()
         ])
+        avg_balanced_class_accuracy = np.mean([
+            results['balanced_class_accuracy'] for results in evaluation_results.values()
+        ])
+        avg_composite_score = np.mean([
+            results['composite_score'] for results in evaluation_results.values()
+        ])
+        avg_catastrophic_rate = np.mean([
+            results['catastrophic_error_rate'] for results in evaluation_results.values()
+        ])
 
         # 返回主要指标
         metrics = {
@@ -407,10 +476,41 @@ class DeepLearningExperiment:
             'accuracy': avg_accuracy,
             'precision': avg_precision,
             'f1_score': avg_f1,
+            'balanced_class_accuracy': avg_balanced_class_accuracy,
+            'composite_score': avg_composite_score,
+            'catastrophic_error_rate': avg_catastrophic_rate,
             'detailed_results': evaluation_results
         }
 
         return metrics
+
+    def _calculate_composite_score(self, balanced_accuracy: float, 
+                                 catastrophic_rate: float, f1_score: float) -> float:
+        """计算综合评分"""
+        weights = self.config.composite_score_weights
+        
+        # 归一化灾难性错误控制分数（错误率越低分数越高）
+        catastrophic_control_score = max(0.0, 1.0 - catastrophic_rate * 20)  # 5%错误率对应0分
+        
+        composite_score = (
+            weights['balanced_class_accuracy'] * balanced_accuracy +
+            weights['catastrophic_control'] * catastrophic_control_score +
+            weights['f1_score'] * f1_score
+        )
+        
+        return composite_score
+    
+    def _check_model_failure(self, change_accuracy: float, stable_accuracy: float,
+                           balanced_accuracy: float, catastrophic_rate: float) -> bool:
+        """检测模型是否失败"""
+        criteria = self.config.model_failure_criteria
+        
+        return (
+            change_accuracy < criteria['min_change_accuracy'] or
+            stable_accuracy < criteria['min_stable_accuracy'] or
+            balanced_accuracy < criteria['min_balanced_accuracy'] or
+            catastrophic_rate > criteria['max_catastrophic_rate']
+        )
 
     def train(self):
         """完整训练流程"""
@@ -420,11 +520,12 @@ class DeepLearningExperiment:
 
         # 早停相关变量
         best_metrics = {
-            'accuracy': 0.0,
-            'precision': 0.0,
-            'f1_score': 0.0
+            'composite_score': 0.0,
+            'balanced_class_accuracy': 0.0,
+            'change_accuracy': 0.0,
         }
         patience_counter = 0
+        training_history = []
 
         for epoch in range(self.config.max_epochs):
             self.current_epoch = epoch
@@ -452,6 +553,9 @@ class DeepLearningExperiment:
             self.training_history['val_accuracy'].append(
                 val_metrics['accuracy']
             )
+            
+            # 添加到训练历史（用于多指标早停）
+            training_history.append(val_metrics)
 
             # TensorBoard记录
             self.writer.add_scalar('Loss/Train', train_loss, epoch)
@@ -463,42 +567,71 @@ class DeepLearningExperiment:
                 'Accuracy/Validation',
                 val_metrics['accuracy'], epoch
             )
+            
+            # 记录新的关键指标
+            self.writer.add_scalar('Metrics/Composite_Score', val_metrics['composite_score'], epoch)
+            self.writer.add_scalar('Metrics/Balanced_Class_Accuracy', val_metrics['balanced_class_accuracy'], epoch)
+            self.writer.add_scalar('Metrics/Catastrophic_Error_Rate', val_metrics['catastrophic_error_rate'], epoch)
 
             # 打印训练结果
             epoch_time = time.time() - epoch_start_time
             print(f"训练损失: {train_loss:.4f} | 训练准确率: {train_accuracy:.3f}")
             print(f"验证损失: {val_metrics['loss']:.4f}")
 
-            # 打印评估结果
-            print("\n🎯 稳定性检测评估:")
-            print(f"  准确率: {val_metrics['accuracy']:.3f}")
-            print(f"  精确率: {val_metrics['precision']:.3f}")
+            # 打印交易感知评估结果
+            print("\n🎯 交易感知评估:")
+            print(f"  综合评分: {val_metrics['composite_score']:.3f}")
+            print(f"  平衡类别准确率: {val_metrics['balanced_class_accuracy']:.3f}")
+            print(f"  灾难性错误率: {val_metrics['catastrophic_error_rate']:.3f}")
             print(f"  F1分数: {val_metrics['f1_score']:.3f}")
 
             print("各时间尺度表现:")
             for horizon, results in val_metrics['detailed_results'].items():
+                failed_status = "❌ 失败" if results['is_failed_model'] else "✅ 正常"
                 print(
-                    f"  {horizon}: "
-                    f"准确率={results['accuracy']:.3f}, "
-                    f"精确率={results['precision']:.3f}, "
-                    f"召回率={results['recall']:.3f}, "
-                    f"F1分数={results['f1_score']:.3f}"
+                    f"  {horizon}: {failed_status} | "
+                    f"稳定类={results['stable_accuracy']:.3f}, "
+                    f"变化类={results['change_accuracy']:.3f}, "
+                    f"综合评分={results['composite_score']:.3f}"
                 )
 
             print(f"耗时: {epoch_time:.2f}s")
 
-            # 模型保存逻辑（基于准确率）
-            if val_metrics['accuracy'] > best_metrics['accuracy']:
-                best_metrics['accuracy'] = val_metrics['accuracy']
-                self.save_model('best_model.pth')
-                print("💾 保存最佳准确率模型")
+            # 多重模型保存逻辑
+            model_improved = False
+            
+            # 1. 综合评分最佳模型
+            if val_metrics['composite_score'] > best_metrics['composite_score']:
+                best_metrics['composite_score'] = val_metrics['composite_score']
+                self.save_model('best_composite.pth')
+                print("💾 保存最佳综合评分模型")
+                model_improved = True
+                
+            # 2. 平衡准确率最佳模型
+            if val_metrics['balanced_class_accuracy'] > best_metrics['balanced_class_accuracy']:
+                best_metrics['balanced_class_accuracy'] = val_metrics['balanced_class_accuracy']
+                self.save_model('best_balanced.pth')
+                print("💾 保存最佳平衡准确率模型")
+                
+            # 3. 变化类准确率最佳模型
+            for horizon, results in val_metrics['detailed_results'].items():
+                if results['change_accuracy'] > best_metrics['change_accuracy']:
+                    best_metrics['change_accuracy'] = results['change_accuracy']
+                    self.save_model('best_change.pth')
+                    print("💾 保存最佳变化类准确率模型")
+
+            # 🎯 改进的早停判断
+            should_stop, stop_reason = self._should_stop_training(
+                training_history, patience_counter
+            )
+            
+            if model_improved:
                 patience_counter = 0
             else:
                 patience_counter += 1
-
-            # 早停判断
-            if patience_counter >= self.config.early_stopping_patience:
-                print(f"🛑 早停触发: 连续{patience_counter}轮准确率未提升")
+                
+            if should_stop:
+                print(f"🛑 早停触发: {stop_reason}")
                 break
 
             # 定期保存
@@ -506,7 +639,48 @@ class DeepLearningExperiment:
                 self.save_model(f'checkpoint_epoch_{epoch+1}.pth')
 
         print("\n✅ 训练完成！")
-        print(f"最佳准确率: {best_metrics['accuracy']:.3f}")
+        print(f"最佳综合评分: {best_metrics['composite_score']:.3f}")
+        print(f"最佳平衡准确率: {best_metrics['balanced_class_accuracy']:.3f}")
+        print(f"最佳变化类准确率: {best_metrics['change_accuracy']:.3f}")
+
+    def _should_stop_training(self, history: list, patience_counter: int) -> tuple:
+        """改进的早停判断逻辑"""
+        if len(history) < 5:  # 至少训练5轮
+            return False, ""
+            
+        # 基础耐心检查
+        if patience_counter >= self.config.early_stopping_patience:
+            return True, f"连续{patience_counter}轮综合评分未提升"
+        
+        # 多指标早停检查
+        if self.config.multi_metric_early_stopping['enabled']:
+            window = self.config.multi_metric_early_stopping['stable_trend_window']
+            if len(history) >= window:
+                recent_metrics = history[-window:]
+                
+                # 检查变化类准确率是否严重下降
+                change_accuracies = []
+                for metrics in recent_metrics:
+                    for results in metrics['detailed_results'].values():
+                        change_accuracies.append(results['change_accuracy'])
+                
+                if len(change_accuracies) >= 2:
+                    change_trend = change_accuracies[-1] - change_accuracies[0]
+                    decline_limit = self.config.multi_metric_early_stopping['change_accuracy_decline_limit']
+                    
+                    if change_trend < decline_limit:
+                        return True, f"变化类准确率下降过多: {change_trend:.3f}"
+                
+                # 检查综合评分是否停滞
+                composite_scores = [m['composite_score'] for m in recent_metrics]
+                if len(composite_scores) >= 2:
+                    score_improvement = max(composite_scores) - min(composite_scores)
+                    min_improvement = self.config.multi_metric_early_stopping['min_improvement_threshold']
+                    
+                    if score_improvement < min_improvement and patience_counter >= 8:
+                        return True, f"综合评分改善停滞: {score_improvement:.4f} < {min_improvement}"
+        
+        return False, ""
 
     def evaluate(self):
         """在测试集上评估"""
@@ -709,4 +883,5 @@ def main():
 
 
 if __name__ == "__main__":
+    main()
     main()
