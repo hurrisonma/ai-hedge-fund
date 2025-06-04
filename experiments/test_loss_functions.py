@@ -52,7 +52,7 @@ class LossFunctionTester:
             print(f"📈 使用权重配置: [1.0, {weight_config}]")
         
         # 🎯 为每个配置创建独立的输出目录
-        base_output_dir = config.output_dir
+        base_output_dir = "outputs"  # 直接使用outputs，因为我们在experiments目录下
         config_output_dir = f"{base_output_dir}/{test_name}"
         
         # 更新所有输出路径
@@ -277,108 +277,137 @@ class LossFunctionTester:
     
     def _print_summary(self, df: pd.DataFrame):
         """打印测试摘要"""
-        print(f"\n📈 测试摘要:")
-        print("-" * 50)
+        print(f"\n📈 权重配置对比测试结果:")
+        print("="*80)
         
         successful_tests = df[df['status'] == 'success']
         
         if len(successful_tests) > 0:
-            # 🎯 新增：检查失败模型
-            failed_models = []
-            valid_models = []
+            # 🎯 为每个权重配置单独输出详细结果
+            print("📊 各权重配置详细结果:")
+            print("-"*80)
             
-            for _, row in successful_tests.iterrows():
+            for i, (_, row) in enumerate(successful_tests.iterrows(), 1):
+                weight = row.get('weight_config', 'N/A')
+                desc = row.get('description', row['loss_function'])
+                
+                print(f"\n🔸 配置 {i}: {desc}")
+                print(f"   权重设置: [1.0, {weight}]")
+                
+                # 核心性能指标
+                stable_acc = row.get('stable_accuracy', 0)
+                change_acc = row.get('change_accuracy', 0)
+                f1 = row.get('f1_score', 0)
+                accuracy = row.get('accuracy', 0)
+                
+                # 状态评估
                 if row.get('is_failed_model', False):
-                    failed_models.append(row['loss_function'])
+                    status = "❌ 失败"
+                elif change_acc > 0.5 and stable_acc > 0.6:
+                    status = "✅ 优秀"
+                elif change_acc > 0.3:
+                    status = "⚠️  一般"  
                 else:
-                    valid_models.append(row)
-            
-            if failed_models:
-                print("❌ 失败模型（不满足基本要求）:")
-                for model_name in failed_models:
-                    print(f"  {model_name}")
+                    status = "🔴 较差"
+                
+                print(f"   评估状态: {status}")
+                print(f"   整体准确率: {accuracy:.3f}")
+                print(f"   F1分数: {f1:.3f}")
+                print(f"   稳定类准确率: {stable_acc:.3f}")
+                print(f"   变化类准确率: {change_acc:.3f}")
+                
+                # 混淆矩阵
+                cm = row.get('confusion_matrix', None)
+                if cm:
+                    print(f"   混淆矩阵:")
+                    print(f"             预测")
+                    print(f"   实际   稳定(0)  变化(1)")
+                    print(f"   稳定(0)  {cm[0][0]:6d}   {cm[0][1]:6d}")
+                    print(f"   变化(1)  {cm[1][0]:6d}   {cm[1][1]:6d}")
+                
+                # 错误分析
+                fp = row.get('false_positives', 0)
+                fn = row.get('false_negatives', 0) 
+                catastrophic_rate = row.get('catastrophic_error_rate', 0)
+                
+                print(f"   误报数(稳定→变化): {fp}")
+                print(f"   漏报数(变化→稳定): {fn}")
+                print(f"   灾难错误率: {catastrophic_rate:.3f}")
+                
+                # 综合评分
+                if 'composite_score' in row:
+                    print(f"   综合评分: {row['composite_score']:.3f}")
+                if 'balanced_class_accuracy' in row:
+                    print(f"   平衡准确率: {row['balanced_class_accuracy']:.3f}")
+                
+                # 模型路径
+                model_path = row.get('model_save_dir', 'N/A')
+                print(f"   模型路径: {model_path}")
                 print()
             
-            # 🎯 按综合评分排序（如果有的话）
-            if 'composite_score' in successful_tests.columns:
-                # 只对有效模型排序
-                valid_df = pd.DataFrame(valid_models) if valid_models else pd.DataFrame()
-                if len(valid_df) > 0:
-                    top_performers = valid_df.nlargest(3, 'composite_score')
-                    
-                    print("🏆 综合评分排名（有效模型）:")
-                    for i, (_, row) in enumerate(top_performers.iterrows(), 1):
-                        print(f"  {i}. {row['loss_function']}: 综合评分={row['composite_score']:.3f}")
-                    print()
+            # 🎯 权重配置对比总结
+            print("="*80)
+            print("📈 权重效果对比总结:")
+            print("-"*50)
             
-            # 按F1分数排序（备选排序）
-            elif 'f1_score' in successful_tests.columns:
-                valid_df = pd.DataFrame(valid_models) if valid_models else pd.DataFrame()
-                if len(valid_df) > 0:
-                    top_performers = valid_df.nlargest(3, 'f1_score')
-                    
-                    print("🏆 F1分数排名（有效模型）:")
-                    for i, (_, row) in enumerate(top_performers.iterrows(), 1):
-                        print(f"  {i}. {row['loss_function']}: F1={row['f1_score']:.3f}")
-                    print()
+            # 按变化类准确率排序
+            sorted_by_change = successful_tests.sort_values('change_accuracy', ascending=False)
             
-            # 🎯 详细类别准确率对比
-            if 'stable_accuracy' in successful_tests.columns:
-                print(f"📊 详细评估对比:")
-                for _, row in successful_tests.iterrows():
-                    model_name = row['loss_function']
-                    stable_acc = row.get('stable_accuracy', 0)
+            print("🎯 变化类准确率排名:")
+            for i, (_, row) in enumerate(sorted_by_change.iterrows(), 1):
+                weight = row.get('weight_config', 'N/A')
+                change_acc = row.get('change_accuracy', 0)
+                stable_acc = row.get('stable_accuracy', 0)
+                
+                balance_indicator = "⚖️ 平衡" if abs(change_acc - stable_acc) < 0.3 else "⚠️ 不平衡"
+                print(f"  {i}. 权重[1.0, {weight}]: 变化类{change_acc:.3f} | 稳定类{stable_acc:.3f} {balance_indicator}")
+            
+            # 数学期望分析
+            print(f"\n🧮 数学期望分析 (93.7%稳定类, 6.3%变化类):")
+            for _, row in successful_tests.iterrows():
+                weight = row.get('weight_config', 'N/A')
+                if weight != 'N/A':
+                    expected_weight = 0.937 * 1.0 + 0.063 * weight
                     change_acc = row.get('change_accuracy', 0)
-                    catastrophic_rate = row.get('catastrophic_error_rate', 0)
-                    model_path = row.get('model_save_dir', 'N/A')
-                    
-                    # 状态标识
-                    if row.get('is_failed_model', False):
-                        status = "❌ 失败"
-                    elif change_acc > 0.5 and stable_acc > 0.6:
-                        status = "✅ 优秀"
-                    elif change_acc > 0.3:
-                        status = "⚠️  一般"
-                    else:
-                        status = "🔴 较差"
-                    
-                    print(f"  {model_name}: {status}")
-                    print(f"    稳定类: {stable_acc:.3f}, 变化类: {change_acc:.3f}")
-                    print(f"    灾难错误率: {catastrophic_rate:.3f}")
-                    print(f"    模型路径: {model_path}")
-                    
-                    # 显示综合评分或平衡准确率
-                    if 'composite_score' in row:
-                        print(f"    综合评分: {row['composite_score']:.3f}")
-                    elif 'balanced_class_accuracy' in row:
-                        print(f"    平衡准确率: {row['balanced_class_accuracy']:.3f}")
-                    print()
+                    print(f"  权重[1.0, {weight}]: 期望权重={expected_weight:.3f}, 实际变化类准确率={change_acc:.3f}")
         
+        # 失败测试
         failed_tests = df[df['status'] == 'failed']
         if len(failed_tests) > 0:
-            print(f"❌ 运行失败的测试:")
+            print(f"\n❌ 运行失败的测试:")
             for _, row in failed_tests.iterrows():
                 print(f"  {row['loss_function']}: {row.get('error', 'Unknown error')}")
 
-        # 🎯 新增：推荐最佳模型
+        # 🎯 推荐结论
         if len(successful_tests) > 0:
-            print(f"\n🎯 推荐结论:")
+            print(f"\n🎯 权重调整建议:")
             
-            # 找出最佳有效模型
-            valid_models_df = successful_tests[
-                successful_tests.get('is_failed_model', pd.Series([True]*len(successful_tests))) == False
-            ]
+            # 分析权重趋势
+            weights_performance = []
+            for _, row in successful_tests.iterrows():
+                weight = row.get('weight_config', None)
+                change_acc = row.get('change_accuracy', 0)
+                if weight is not None:
+                    weights_performance.append((weight, change_acc))
             
-            if len(valid_models_df) > 0:
-                if 'composite_score' in valid_models_df.columns:
-                    best_model = valid_models_df.loc[valid_models_df['composite_score'].idxmax()]
-                    print(f"  📊 推荐模型: {best_model['loss_function']}")
-                    print(f"  📈 综合评分: {best_model['composite_score']:.3f}")
-                    print(f"  🎯 变化类准确率: {best_model.get('change_accuracy', 0):.3f}")
+            if len(weights_performance) >= 2:
+                weights_performance.sort()
+                best_weight, best_change_acc = max(weights_performance, key=lambda x: x[1])
+                
+                print(f"  📊 最佳权重: [1.0, {best_weight}]")
+                print(f"  📈 最佳变化类准确率: {best_change_acc:.3f}")
+                
+                if best_change_acc < 0.3:
+                    print(f"  💡 建议: 变化类准确率仍较低，考虑:")
+                    print(f"     - 进一步提升权重至 [1.0, {best_weight + 2}] 或 [1.0, {best_weight + 5}]")
+                    print(f"     - 尝试其他损失函数 (business_cost, focal_loss)")
+                    print(f"     - 调整学习率或训练策略")
+                elif best_change_acc > 0.6:
+                    print(f"  ✅ 权重调整有效！可尝试微调至 [1.0, {best_weight + 0.5}] 优化平衡性")
                 else:
-                    print("  ⚠️  所有模型都存在问题，建议进一步调优")
+                    print(f"  ⚠️  有进展但仍需改进，建议继续调整权重")
             else:
-                print("  ❌ 没有通过基本要求的模型，需要重新设计")
+                print("  ❌ 没有足够的数据进行权重趋势分析")
 
 
 def main():

@@ -59,7 +59,7 @@ class ExperimentConfig:
     
     # ========== 数据相关 ==========
     # CSV数据文件路径（使用新下载的aggTrades数据）
-    data_file: str = "data/processed/USDCUSDT_aggTrades_recent_6months.csv"
+    data_file: str = "experiments/data/processed/USDCUSDT_aggTrades_recent_6months.csv"
     
     # 数据列名映射（根据aggTrades数据调整）
     csv_columns: Dict[str, str] = field(default_factory=lambda: {
@@ -223,9 +223,9 @@ class ExperimentConfig:
     
     # 🎯 新增：综合评分权重配置
     composite_score_weights: Dict[str, float] = field(default_factory=lambda: {
-        'balanced_class_accuracy': 0.50,      # 50%权重：平衡准确率
+        'balanced_class_accuracy': 0.70,      # 70%权重：平衡准确率（提升）
         'catastrophic_control': 0.30,         # 30%权重：控制极端错误
-        'f1_score': 0.20,                     # 20%权重：F1综合指标
+        # 删除F1分数权重，专注核心指标
     })
     
     # 🎯 新增：多指标早停配置

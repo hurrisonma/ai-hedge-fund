@@ -427,7 +427,7 @@ class DeepLearningExperiment:
             
             # 🎯 计算综合评分
             composite_score = self._calculate_composite_score(
-                balanced_class_accuracy, catastrophic_error_rate, f1
+                balanced_class_accuracy, catastrophic_error_rate
             )
             
             # 🎯 检测模型是否失败
@@ -485,8 +485,8 @@ class DeepLearningExperiment:
         return metrics
 
     def _calculate_composite_score(self, balanced_accuracy: float, 
-                                 catastrophic_rate: float, f1_score: float) -> float:
-        """计算综合评分"""
+                                 catastrophic_rate: float) -> float:
+        """计算综合评分（去掉F1分数）"""
         weights = self.config.composite_score_weights
         
         # 归一化灾难性错误控制分数（错误率越低分数越高）
@@ -494,8 +494,7 @@ class DeepLearningExperiment:
         
         composite_score = (
             weights['balanced_class_accuracy'] * balanced_accuracy +
-            weights['catastrophic_control'] * catastrophic_control_score +
-            weights['f1_score'] * f1_score
+            weights['catastrophic_control'] * catastrophic_control_score
         )
         
         return composite_score
@@ -579,11 +578,9 @@ class DeepLearningExperiment:
             print(f"验证损失: {val_metrics['loss']:.4f}")
 
             # 打印交易感知评估结果
-            print("\n🎯 交易感知评估:")
-            print(f"  综合评分: {val_metrics['composite_score']:.3f}")
-            print(f"  平衡类别准确率: {val_metrics['balanced_class_accuracy']:.3f}")
-            print(f"  灾难性错误率: {val_metrics['catastrophic_error_rate']:.3f}")
-            print(f"  F1分数: {val_metrics['f1_score']:.3f}")
+            print(f"\n🎯 交易感知评估: 综合评分={val_metrics['composite_score']:.3f} | "
+                  f"平衡准确率={val_metrics['balanced_class_accuracy']:.3f} | "
+                  f"灾难错误率={val_metrics['catastrophic_error_rate']:.3f}")
 
             print("各时间尺度表现:")
             for horizon, results in val_metrics['detailed_results'].items():
@@ -770,12 +767,9 @@ class DeepLearningExperiment:
                 'probabilities': y_proba
             }
 
-            print(f"\n{horizon_key} 预测结果:")
-            print(f"  准确率: {accuracy:.3f}")
-            print(f"  精确率: {precision:.3f}")
-            print(f"  召回率: {recall:.3f}")
-            print(f"  F1分数: {f1:.3f}")
-            print(f"  混淆矩阵:\n{cm}")
+            print(f"\n{horizon_key} 预测结果: 准确率={accuracy:.3f} | "
+                  f"精确率={precision:.3f} | 召回率={recall:.3f} | F1={f1:.3f}")
+            print(f"  混淆矩阵: {cm.tolist()}")
 
         return results
 
