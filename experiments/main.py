@@ -264,10 +264,7 @@ class DeepLearningExperiment:
             p.numel() for p in self.model.parameters() if p.requires_grad
         )
 
-        print("📊 模型参数统计:")
-        print(f"  总参数: {total_params:,}")
-        print(f"  可训练参数: {trainable_params:,}")
-        print(f"  模型大小: ~{total_params * 4 / 1024 / 1024:.1f}MB")
+        print(f"📊 模型参数统计: 总参数={total_params:,} | 可训练参数={trainable_params:,} | 模型大小=~{total_params * 4 / 1024 / 1024:.1f}MB")
         print("✅ 模型构建完成")
 
     def train_epoch(self, epoch: int):
@@ -582,15 +579,10 @@ class DeepLearningExperiment:
                   f"平衡准确率={val_metrics['balanced_class_accuracy']:.3f} | "
                   f"灾难错误率={val_metrics['catastrophic_error_rate']:.3f}")
 
-            print("各时间尺度表现:")
             for horizon, results in val_metrics['detailed_results'].items():
-                failed_status = "❌ 失败" if results['is_failed_model'] else "✅ 正常"
-                print(
-                    f"  {horizon}: {failed_status} | "
-                    f"稳定类={results['stable_accuracy']:.3f}, "
-                    f"变化类={results['change_accuracy']:.3f}, "
-                    f"综合评分={results['composite_score']:.3f}"
-                )
+                failed_status = "❌失败" if results['is_failed_model'] else "✅正常"
+                cm = results['confusion_matrix']
+                print(f"{horizon}: {failed_status} | 稳定类={results['stable_accuracy']:.3f}, 变化类={results['change_accuracy']:.3f}, 综合评分={results['composite_score']:.3f} | 混淆矩阵{cm.tolist()}")
 
             print(f"耗时: {epoch_time:.2f}s")
 
@@ -639,6 +631,30 @@ class DeepLearningExperiment:
         print(f"最佳综合评分: {best_metrics['composite_score']:.3f}")
         print(f"最佳平衡准确率: {best_metrics['balanced_class_accuracy']:.3f}")
         print(f"最佳变化类准确率: {best_metrics['change_accuracy']:.3f}")
+
+        # 输出所有轮训练的详细历史
+        print("\n📈 训练历史回顾:")
+        print("=" * 80)
+        
+        # 获取参数组合信息
+        if (self.config.loss_function_type == "business_cost" and 
+            "business_cost" in self.config.loss_function_params):
+            bc_params = self.config.loss_function_params["business_cost"]
+            false_alarm = bc_params.get("false_alarm_cost", "N/A")
+            miss_change = bc_params.get("miss_change_cost", "N/A")
+            correct_reward = bc_params.get("correct_reward", "N/A")
+            param_info = f"参数[误报={false_alarm}, 漏报={miss_change}, 奖励={correct_reward}]"
+        else:
+            param_info = "参数[标准配置]"
+        
+        print(f"配置: {param_info}")
+        
+        for epoch, metrics in enumerate(training_history, 1):
+            for horizon, results in metrics['detailed_results'].items():
+                failed_status = "❌失败" if results['is_failed_model'] else "✅正常"
+                cm = results['confusion_matrix']
+                print(f"Epoch{epoch} {horizon}: {failed_status} | 稳定类={results['stable_accuracy']:.3f}, 变化类={results['change_accuracy']:.3f}, 综合评分={results['composite_score']:.3f} | 混淆矩阵{cm.tolist()}")
+        print("=" * 80)
 
     def _should_stop_training(self, history: list, patience_counter: int) -> tuple:
         """改进的早停判断逻辑"""
@@ -758,18 +774,26 @@ class DeepLearningExperiment:
             )
             cm = confusion_matrix(y_true, y_pred)
 
+            # 计算各类别准确率
+            tn, fp, fn, tp = cm[0, 0], cm[0, 1], cm[1, 0], cm[1, 1]
+            stable_accuracy = tn / (tn + fp) if (tn + fp) > 0 else 0.0  # 稳定类准确率
+            change_accuracy = tp / (tp + fn) if (tp + fn) > 0 else 0.0  # 变化类准确率
+
             results[horizon_key] = {
                 'accuracy': accuracy,
                 'precision': precision,
                 'recall': recall,
                 'f1': f1,
                 'confusion_matrix': cm,
-                'probabilities': y_proba
+                'probabilities': y_proba,
+                'stable_accuracy': stable_accuracy,
+                'change_accuracy': change_accuracy,
             }
 
             print(f"\n{horizon_key} 预测结果: 准确率={accuracy:.3f} | "
                   f"精确率={precision:.3f} | 召回率={recall:.3f} | F1={f1:.3f}")
             print(f"  混淆矩阵: {cm.tolist()}")
+            print(f"  稳定类准确率: {stable_accuracy:.3f} | 变化类准确率: {change_accuracy:.3f}")
 
         return results
 

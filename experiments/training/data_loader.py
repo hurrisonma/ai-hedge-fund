@@ -83,8 +83,6 @@ class KLineDataset(Dataset):
         self.n_samples = len(self.valid_indices)
         self.feature_dim = features.shape[1]
         
-        print(f"  📊 数据集统计: 总样本={total_samples}, 有效样本={self.n_samples} ({self.n_samples/total_samples*100:.1f}%)")
-        
         # 标签对齐检查
         for horizon, label_array in labels.items():
             if len(label_array) != len(features):
@@ -157,16 +155,13 @@ class KLineDataProcessor:
         Returns:
             原始数据DataFrame
         """
-        print(f"📂 加载CSV数据: {csv_path}")
-        
         if not os.path.exists(csv_path):
             raise FileNotFoundError(f"数据文件不存在: {csv_path}")
         
         try:
             # 尝试自动检测CSV格式
             df = pd.read_csv(csv_path)
-            print(f"  ✅ 成功加载 {len(df)} 行数据")
-            print(f"  📊 数据列: {list(df.columns)}")
+            print(f"📂 数据加载: {len(df)}行 | 列数: {len(df.columns)} | 文件: {os.path.basename(csv_path)}")
             
             # 检查aggTrades必需列
             required_cols = ['timestamp', 'best_bid', 'best_ask', 'total_volume']
@@ -206,9 +201,7 @@ class KLineDataProcessor:
         import sys
         sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         from utils.aggtrades_features import AggTradesFeatureEngineer
-        
-        print("🔧 准备aggTrades特征和标签...")
-        
+
         # 使用aggTrades特征工程
         fe = AggTradesFeatureEngineer()
         features_df = fe.process_aggtrades_data(df)
@@ -241,12 +234,16 @@ class KLineDataProcessor:
                 if label_col in labels_df.columns:
                     labels[f'{horizon}min'] = labels_df[label_col].values
         
-        print(f"  ✅ 特征形状: {features.shape}")
-        print(f"  ✅ 标签数量: {len(labels)}")
+        # 计算标签分布信息
+        label_info = []
         for horizon, label_array in labels.items():
-            # 🔧 修复：使用pandas统计，可以处理-1标签
             label_counts = pd.Series(label_array).value_counts().sort_index()
-            print(f"    {horizon}: {label_array.shape}, 类别分布: {label_counts.to_dict()}")
+            if len(label_counts) == 2:  # 二分类
+                stable_pct = label_counts.get(0, 0) / len(label_array) * 100
+                change_pct = label_counts.get(1, 0) / len(label_array) * 100
+                label_info.append(f"{horizon}: 稳定{stable_pct:.1f}%|变化{change_pct:.1f}%")
+        
+        print(f"🔧 特征工程: 特征{features.shape[1]}维 | 样本{features.shape[0]}个 | 时间{horizons}分钟 | {' '.join(label_info)}")
         
         return features, labels, feature_names
     
@@ -265,8 +262,6 @@ class KLineDataProcessor:
         Returns:
             (train, val, test) 数据元组
         """
-        print("📊 分割训练/验证/测试集...")
-        
         n_samples = len(features)
         train_ratio = self.config.get('train_ratio', 0.8)
         val_ratio = self.config.get('val_ratio', 0.1)
@@ -285,9 +280,7 @@ class KLineDataProcessor:
         val_labels = {k: v[train_end:val_end] for k, v in labels.items()}
         test_labels = {k: v[val_end:] for k, v in labels.items()}
         
-        print(f"  📈 训练集: {len(train_features)} 样本")
-        print(f"  📊 验证集: {len(val_features)} 样本")
-        print(f"  📋 测试集: {len(test_features)} 样本")
+        print(f"📊 数据分割: 训练{len(train_features)} | 验证{len(val_features)} | 测试{len(test_features)} (时序)")
         
         return (train_features, train_labels), (val_features, val_labels), (test_features, test_labels)
     
@@ -298,15 +291,13 @@ class KLineDataProcessor:
         Args:
             train_features: 训练集特征
         """
-        print("📏 拟合特征缩放器...")
-        
         # 使用RobustScaler（对异常值更鲁棒）
         self.feature_scaler = RobustScaler()
         
         # 只在训练数据上拟合
         self.feature_scaler.fit(train_features)
         
-        print("  ✅ 缩放器拟合完成")
+        print("⚖️ 特征标准化: RobustScaler训练完成")
     
     def transform_features(self, features: np.ndarray) -> np.ndarray:
         """
@@ -335,12 +326,10 @@ class KLineDataProcessor:
         Returns:
             (train_loader, val_loader, test_loader)
         """
-        print("🔄 创建数据加载器...")
-        
         sequence_length = self.config.get('sequence_length', 30)
         batch_size = self.config.get('batch_size', 64)
         
-        # 创建数据集
+        # 创建数据集（静默创建，不输出日志）
         train_dataset = KLineDataset(train_data[0], train_data[1], sequence_length)
         val_dataset = KLineDataset(val_data[0], val_data[1], sequence_length)
         test_dataset = KLineDataset(test_data[0], test_data[1], sequence_length)
@@ -349,15 +338,15 @@ class KLineDataProcessor:
         train_loader = DataLoader(
             train_dataset, 
             batch_size=batch_size, 
-            shuffle=True,  # 训练时随机打乱
-            num_workers=0,  # 避免多进程问题
+            shuffle=True,
+            num_workers=0,
             pin_memory=True if torch.cuda.is_available() else False
         )
         
         val_loader = DataLoader(
             val_dataset,
             batch_size=batch_size,
-            shuffle=False,  # 验证时保持顺序
+            shuffle=False,
             num_workers=0,
             pin_memory=True if torch.cuda.is_available() else False
         )
@@ -365,14 +354,13 @@ class KLineDataProcessor:
         test_loader = DataLoader(
             test_dataset,
             batch_size=batch_size, 
-            shuffle=False,  # 测试时保持顺序
+            shuffle=False,
             num_workers=0,
             pin_memory=True if torch.cuda.is_available() else False
         )
         
-        print(f"  ✅ 训练批次数: {len(train_loader)}")
-        print(f"  ✅ 验证批次数: {len(val_loader)}")
-        print(f"  ✅ 测试批次数: {len(test_loader)}")
+        # 统一输出数据加载器统计信息
+        print(f"🔄 数据加载器: 序列{sequence_length}分钟 | 批次{batch_size} | 训练{train_dataset.n_samples}样本→{len(train_loader)}批次 | 验证{val_dataset.n_samples}样本→{len(val_loader)}批次 | 测试{test_dataset.n_samples}样本→{len(test_loader)}批次")
         
         return train_loader, val_loader, test_loader
     
