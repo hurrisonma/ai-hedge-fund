@@ -8,17 +8,17 @@
 """
 
 import json
-import multiprocessing as mp
 import os
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from itertools import product
-from typing import Dict, List
 
 import pandas as pd
 
+# 将项目根目录添加到sys.path，以便导入自定义模块
+# 建议在所有标准库和第三方库导入之后，自定义模块导入之前进行
 sys.path.append('.')
 
 from main import DeepLearningExperiment
@@ -28,6 +28,9 @@ from training.config import ExperimentConfig
 def run_single_test_worker(params):
     """单个参数组合的工作进程"""
     false_alarm, miss_change, correct_reward = params
+    
+    # 打印进程ID以验证多进程运行
+    print(f"💼 工作进程 PID: {os.getpid()} 正在处理参数: {params}")
     
     print(f"\n🔬 进程启动: 误报={false_alarm}, 漏报={miss_change}, 奖励={correct_reward}")
     
@@ -43,7 +46,9 @@ def run_single_test_worker(params):
     }
     
     # 输出目录配置
-    param_name = f"business_cost_f{false_alarm}_m{miss_change}_r{correct_reward}"
+    param_name = (
+        f"business_cost_f{false_alarm}_m{miss_change}_r{correct_reward}"
+    )
     config.output_dir = f"outputs/{param_name}"
     config.model_save_dir = f"outputs/{param_name}/models"
     config.log_dir = f"outputs/{param_name}/logs"
@@ -85,7 +90,9 @@ def run_single_test_worker(params):
             'false_alarm_cost': false_alarm,
             'miss_change_cost': miss_change,
             'correct_reward': correct_reward,
-            'param_signature': f"f{false_alarm}_m{miss_change}_r{correct_reward}",
+            'param_signature': (
+                f"f{false_alarm}_m{miss_change}_r{correct_reward}"
+            ),
             
             # 核心性能指标
             'accuracy': test_results.get('accuracy', 0.0),
@@ -101,10 +108,14 @@ def run_single_test_worker(params):
             # 错误分析
             'false_positives': test_results.get('false_positives', 0),
             'false_negatives': test_results.get('false_negatives', 0),
-            'catastrophic_error_rate': test_results.get('catastrophic_error_rate', 0.0),
+            'catastrophic_error_rate': test_results.get(
+                'catastrophic_error_rate', 0.0
+            ),
             
             # 混淆矩阵
-            'confusion_matrix': test_results.get('confusion_matrix', [[0, 0], [0, 0]]),
+            'confusion_matrix': test_results.get(
+                'confusion_matrix', [[0, 0], [0, 0]]
+            ),
             
             # 训练信息
             'training_time': training_time,
@@ -123,7 +134,9 @@ def run_single_test_worker(params):
             'false_alarm_cost': false_alarm,
             'miss_change_cost': miss_change,
             'correct_reward': correct_reward,
-            'param_signature': f"f{false_alarm}_m{miss_change}_r{correct_reward}",
+            'param_signature': (
+                f"f{false_alarm}_m{miss_change}_r{correct_reward}"
+            ),
             'status': 'failed',
             'error': str(e),
             'change_accuracy': 0.0,
@@ -156,7 +169,7 @@ class ParallelBusinessCostTest:
         
     def run_all_tests(self):
         """运行所有参数组合测试（并行版本）"""
-        print(f"🚀 开始并行BusinessCost参数测试")
+        print("🚀 开始并行BusinessCost参数测试")
         print("=" * 80)
         
         start_time = time.time()
@@ -177,8 +190,10 @@ class ParallelBusinessCostTest:
                     self.results.append(result)
                     completed += 1
                     
-                    print(f"📊 进度: {completed}/{len(self.param_combinations)} "
-                          f"({completed/len(self.param_combinations)*100:.1f}%)")
+                    num_combinations = len(self.param_combinations)
+                    progress_percent = (completed / num_combinations) * 100
+                    print(f"📊 进度: {completed}/{num_combinations} "
+                          f"({progress_percent:.1f}%)")
                     
                     # 实时保存结果
                     self.save_intermediate_results()
@@ -194,7 +209,9 @@ class ParallelBusinessCostTest:
         if not self.results:
             return
             
-        json_file = f"outputs/business_cost_test_parallel_{self.timestamp}.json"
+        json_file = (
+            f"outputs/business_cost_test_parallel_{self.timestamp}.json"
+        )
         os.makedirs("outputs", exist_ok=True)
         with open(json_file, 'w', encoding='utf-8') as f:
             json.dump(self.results, f, indent=2, ensure_ascii=False)
@@ -231,7 +248,8 @@ class ParallelBusinessCostTest:
         print("\n🎯 按变化类准确率排序 (前10名):")
         top_change = success_df.nlargest(10, 'change_accuracy')
         for _, row in top_change.iterrows():
-            print(f"  {row['param_signature']}: 变化类={row['change_accuracy']:.1%}, "
+            print(f"  {row['param_signature']}: "
+                  f"变化类={row['change_accuracy']:.1%}, "
                   f"稳定类={row['stable_accuracy']:.1%}, "
                   f"加权评分={row['weighted_score']:.3f}")
         
@@ -248,7 +266,9 @@ class ParallelBusinessCostTest:
               f"({best_change['change_accuracy']:.1%})")
         
         # 保存CSV报告
-        csv_file = f"outputs/business_cost_parallel_report_{self.timestamp}.csv"
+        csv_file = (
+            f"outputs/business_cost_parallel_report_{self.timestamp}.csv"
+        )
         success_df.to_csv(csv_file, index=False)
         print(f"\n💾 详细结果已保存到: {csv_file}")
 
@@ -259,7 +279,7 @@ def main():
     
     parser = argparse.ArgumentParser(description='BusinessCost并行参数优化测试')
     parser.add_argument('--workers', type=int, default=2, 
-                       help='并行进程数 (GPU建议2-3个，CPU可更多)')
+                        help='并行进程数 (GPU建议2-3个，CPU可更多)')
     args = parser.parse_args()
     
     print("🚀 BusinessCost损失函数并行参数优化测试")
