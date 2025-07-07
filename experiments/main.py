@@ -217,7 +217,8 @@ class DeepLearningExperiment:
                     task_weights,
                     false_alarm_cost=params["false_alarm_cost"],
                     miss_change_cost=params["miss_change_cost"],
-                    correct_reward=params["correct_reward"]
+                    stable_correct_reward=params["stable_correct_reward"],
+                    change_correct_reward=params["change_correct_reward"]
                 )
                 
             elif loss_type == "imbalanced_focal":
@@ -642,8 +643,9 @@ class DeepLearningExperiment:
             bc_params = self.config.loss_function_params["business_cost"]
             false_alarm = bc_params.get("false_alarm_cost", "N/A")
             miss_change = bc_params.get("miss_change_cost", "N/A")
-            correct_reward = bc_params.get("correct_reward", "N/A")
-            param_info = f"参数[误报={false_alarm}, 漏报={miss_change}, 奖励={correct_reward}]"
+            stable_correct_reward = bc_params.get("stable_correct_reward", "N/A")
+            change_correct_reward = bc_params.get("change_correct_reward", "N/A")
+            param_info = f"参数[误报={false_alarm}, 漏报={miss_change}, 奖励=[稳定={stable_correct_reward}, 变化={change_correct_reward}]"
         else:
             param_info = "参数[标准配置]"
         

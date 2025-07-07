@@ -277,9 +277,10 @@ class ExperimentConfig:
         
         # 业务成本驱动损失参数
         "business_cost": {
-            "false_alarm_cost": 1.0,    # 误报成本(稳定->变化)
-            "miss_change_cost": 8.0,    # 漏报成本(变化->稳定)
-            "correct_reward": 0.2,      # 正确预测奖励
+            "false_alarm_cost": 1.0,        # 误报成本(稳定->变化)
+            "miss_change_cost": 8.0,        # 漏报成本(变化->稳定)
+            "stable_correct_reward": 0.1,   # 稳定类预测正确奖励
+            "change_correct_reward": 0.3,   # 变化类预测正确奖励
         },
         
         # 改进Focal Loss参数

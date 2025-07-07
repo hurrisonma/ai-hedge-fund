@@ -564,17 +564,20 @@ class BusinessCostLoss(nn.Module):
     核心思想：直接根据业务场景中不同错误的成本来设计损失
     - 稳定误判为变化：导致不必要的交易，成本较低
     - 变化误判为稳定：错过交易机会，成本较高
+    - 分别设定稳定类和变化类的预测正确奖励
     """
     
     def __init__(self, task_weights: Dict[str, float],
-                 false_alarm_cost: float = 1.0,    # 误报成本(稳定->变化)
-                 miss_change_cost: float = 5.0,    # 漏报成本(变化->稳定)
-                 correct_reward: float = 0.1):     # 正确预测奖励
+                 false_alarm_cost: float = 1.0,        # 误报成本(稳定->变化)
+                 miss_change_cost: float = 5.0,        # 漏报成本(变化->稳定)
+                 stable_correct_reward: float = 0.1,   # 稳定类预测正确奖励
+                 change_correct_reward: float = 0.2):  # 变化类预测正确奖励
         super().__init__()
         self.task_weights = task_weights
         self.false_alarm_cost = false_alarm_cost
         self.miss_change_cost = miss_change_cost
-        self.correct_reward = correct_reward
+        self.stable_correct_reward = stable_correct_reward
+        self.change_correct_reward = change_correct_reward
         
         # 成本矩阵: [真实标签][预测标签]
         self.cost_matrix = torch.tensor([
@@ -603,8 +606,11 @@ class BusinessCostLoss(nn.Module):
                 pred_class = torch.argmax(pred)
                 
                 if true == pred_class:
-                    # 预测正确：小损失，鼓励高置信度
-                    loss = -self.correct_reward * torch.log(pred[true] + 1e-8)
+                    # 预测正确：分别对待稳定类和变化类
+                    if true == 0:  # 稳定类预测正确
+                        loss = -self.stable_correct_reward * torch.log(pred[true] + 1e-8)
+                    else:  # 变化类预测正确
+                        loss = -self.change_correct_reward * torch.log(pred[true] + 1e-8)
                 else:
                     # 预测错误：按业务成本加权
                     cost = cost_matrix[true, pred_class]

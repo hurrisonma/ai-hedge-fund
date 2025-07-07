@@ -2,8 +2,10 @@
 """
 业务成本损失函数测试版本
 支持27种参数配置的串行测试
+现在支持灵活的命令行参数控制
 """
 
+import argparse
 import json
 import os
 import sys
@@ -21,14 +23,121 @@ from main import DeepLearningExperiment
 from training.config import ExperimentConfig
 
 
+def parse_arguments():
+    """解析命令行参数"""
+    parser = argparse.ArgumentParser(
+        description="BusinessCost损失函数参数优化测试",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+使用示例:
+  # 运行全部81种组合
+  python %(prog)s
+  
+  # 运行特定组合
+  python %(prog)s --single 2 7 0.3 0.4
+  
+  # 运行参数范围
+  python %(prog)s --range --false-alarm 1,2 --miss-change 7,8 --stable-reward 0.3 --change-reward 0.4
+  
+  # 运行前5个组合
+  python %(prog)s --count 5
+  
+  # 运行指定编号的组合
+  python %(prog)s --indices 5,14,22
+  
+  # 只分析已有结果
+  python %(prog)s --analyze-only
+        """
+    )
+    
+    # 参数组合控制
+    group_combo = parser.add_argument_group('参数组合控制')
+    group_combo.add_argument('--single', nargs=4, metavar=('F', 'M', 'SR', 'CR'),
+                             help='运行单个组合 (误报成本, 漏报成本, 稳定奖励, 变化奖励)')
+    group_combo.add_argument('--range', action='store_true',
+                             help='使用范围模式 (需配合参数范围选项)')
+    group_combo.add_argument('--false-alarm', type=str,
+                             help='误报成本范围，逗号分隔 (如: 1,2,3)')
+    group_combo.add_argument('--miss-change', type=str,
+                             help='漏报成本范围，逗号分隔 (如: 6,7,8)')
+    group_combo.add_argument('--stable-reward', type=str,
+                             help='稳定奖励范围，逗号分隔 (如: 0.2,0.3,0.4)')
+    group_combo.add_argument('--change-reward', type=str,
+                             help='变化奖励范围，逗号分隔 (如: 0.2,0.3,0.4)')
+    group_combo.add_argument('--count', type=int,
+                             help='只运行前N个组合')
+    group_combo.add_argument('--start', type=int, default=1,
+                             help='从第N个组合开始 (默认: 1)')
+    group_combo.add_argument('--indices', type=str,
+                             help='运行指定编号的组合，逗号分隔 (如: 1,5,10)')
+    
+    # 结果管理
+    group_result = parser.add_argument_group('结果管理')
+    group_result.add_argument('--analyze-only', action='store_true',
+                              help='只分析已有结果，不重新训练')
+    group_result.add_argument('--result-file', type=str,
+                              help='指定结果文件路径')
+    group_result.add_argument('--resume', action='store_true',
+                              help='继续中断的测试')
+    group_result.add_argument('--retry-failed', action='store_true',
+                              help='重跑失败的组合')
+    
+    # 实用工具
+    group_util = parser.add_argument_group('实用工具')
+    group_util.add_argument('--list-combinations', action='store_true',
+                            help='列出所有组合编号')
+    group_util.add_argument('--validate', nargs=3, metavar=('F', 'M', 'R'),
+                            help='验证参数组合有效性')
+    
+    return parser.parse_args()
+
+
+def parse_param_list(param_str, param_type=float):
+    """解析参数列表字符串"""
+    if not param_str:
+        return None
+    try:
+        return [param_type(x.strip()) for x in param_str.split(',')]
+    except ValueError as e:
+        raise ValueError(f"参数解析错误: {param_str} - {e}")
+
+
+def validate_single_combination(false_alarm, miss_change, stable_reward, change_reward):
+    """验证单个参数组合的有效性"""
+    try:
+        false_alarm = float(false_alarm)
+        miss_change = float(miss_change)
+        stable_reward = float(stable_reward)
+        change_reward = float(change_reward)
+        
+        # 基本范围检查
+        if false_alarm <= 0:
+            return False, "误报成本必须大于0"
+        if miss_change <= 0:
+            return False, "漏报成本必须大于0"
+        if stable_reward <= 0:
+            return False, "稳定奖励必须大于0"
+        if change_reward <= 0:
+            return False, "变化奖励必须大于0"
+        if stable_reward >= 1:
+            return False, "稳定奖励应该小于1"
+        if change_reward >= 1:
+            return False, "变化奖励应该小于1"
+            
+        return True, "参数组合有效"
+    except ValueError:
+        return False, "参数类型错误，请使用数字"
+
+
 def run_single_test_worker(params):
     """单个参数组合的工作进程"""
-    false_alarm, miss_change, correct_reward = params
+    false_alarm, miss_change, stable_reward, change_reward = params
     
     # 打印进程ID以验证多进程运行
     print(f"💼 工作进程 PID: {os.getpid()} 正在处理参数: {params}")
     
-    print(f"\n🔬 进程启动: 误报={false_alarm}, 漏报={miss_change}, 奖励={correct_reward}")
+    print(f"\n🔬 进程启动: 误报={false_alarm}, 漏报={miss_change}, "
+          f"稳定奖励={stable_reward}, 变化奖励={change_reward}")
     
     # 创建配置
     config = ExperimentConfig()
@@ -38,12 +147,14 @@ def run_single_test_worker(params):
     config.loss_function_params["business_cost"] = {
         "false_alarm_cost": false_alarm,
         "miss_change_cost": miss_change,
-        "correct_reward": correct_reward
+        "stable_correct_reward": stable_reward,
+        "change_correct_reward": change_reward
     }
     
     # 输出目录配置
     param_name = (
-        f"business_cost_f{false_alarm}_m{miss_change}_r{correct_reward}"
+        f"business_cost_f{false_alarm}_m{miss_change}_"
+        f"sr{stable_reward}_cr{change_reward}"
     )
     config.output_dir = f"outputs/{param_name}"
     config.model_save_dir = f"outputs/{param_name}/models"
@@ -82,7 +193,10 @@ def run_single_test_worker(params):
         print("=" * 80)
         
         # 输出参数配置信息
-        param_info = f"配置: 参数[误报={false_alarm}, 漏报={miss_change}, 奖励={correct_reward}]"
+        param_info = (
+            f"配置: 参数[误报={false_alarm}, 漏报={miss_change}, "
+            f"稳定奖励={stable_reward}, 变化奖励={change_reward}]"
+        )
         print(param_info)
         
         # 由于train()方法没有返回详细的训练历史，我们输出简化的提示
@@ -121,9 +235,10 @@ def run_single_test_worker(params):
         result = {
             'false_alarm_cost': false_alarm,
             'miss_change_cost': miss_change,
-            'correct_reward': correct_reward,
+            'stable_correct_reward': stable_reward,
+            'change_correct_reward': change_reward,
             'param_signature': (
-                f"f{false_alarm}_m{miss_change}_r{correct_reward}"
+                f"f{false_alarm}_m{miss_change}_sr{stable_reward}_cr{change_reward}"
             ),
             
             # 核心性能指标
@@ -188,9 +303,10 @@ def run_single_test_worker(params):
         return {
             'false_alarm_cost': false_alarm,
             'miss_change_cost': miss_change,
-            'correct_reward': correct_reward,
+            'stable_correct_reward': stable_reward,
+            'change_correct_reward': change_reward,
             'param_signature': (
-                f"f{false_alarm}_m{miss_change}_r{correct_reward}"
+                f"f{false_alarm}_m{miss_change}_sr{stable_reward}_cr{change_reward}"
             ),
             'status': 'failed',
             'error': str(e),
@@ -203,16 +319,31 @@ def run_single_test_worker(params):
 class BusinessCostTest:
     """业务成本参数测试类（串行版本）"""
     
-    def __init__(self):
-        self.false_alarm_costs = [1, 2, 3]
-        self.miss_change_costs = [6, 7, 8] 
-        self.correct_rewards = [0.2, 0.3, 0.4]
+    def __init__(self, custom_params=None):
+        # 默认参数范围
+        self.default_false_alarm_costs = [1, 2, 3]
+        self.default_miss_change_costs = [6, 7, 8] 
+        self.default_stable_rewards = [0.2, 0.3, 0.4]
+        self.default_change_rewards = [0.2, 0.3, 0.4]
+        
+        # 根据输入设置实际使用的参数
+        if custom_params:
+            self.false_alarm_costs = custom_params.get('false_alarm', self.default_false_alarm_costs)
+            self.miss_change_costs = custom_params.get('miss_change', self.default_miss_change_costs)
+            self.stable_rewards = custom_params.get('stable_reward', self.default_stable_rewards)
+            self.change_rewards = custom_params.get('change_reward', self.default_change_rewards)
+        else:
+            self.false_alarm_costs = self.default_false_alarm_costs
+            self.miss_change_costs = self.default_miss_change_costs
+            self.stable_rewards = self.default_stable_rewards
+            self.change_rewards = self.default_change_rewards
         
         # 生成所有组合
         self.param_combinations = list(product(
             self.false_alarm_costs,
             self.miss_change_costs, 
-            self.correct_rewards
+            self.stable_rewards,
+            self.change_rewards
         ))
         
         self.results = []
@@ -220,18 +351,67 @@ class BusinessCostTest:
         
         print(f"🧪 准备串行测试 {len(self.param_combinations)} 种参数组合")
         
-    def run_all_tests(self):
-        """运行所有参数组合测试（串行版本）"""
+    def list_all_combinations(self):
+        """列出所有参数组合"""
+        print("\n📋 所有参数组合列表:")
+        print("=" * 80)
+        for i, (f, m, sr, cr) in enumerate(self.param_combinations, 1):
+            print(f"{i:2d}. 误报成本={f}, 漏报成本={m}, 稳定奖励={sr}, 变化奖励={cr}")
+        print("=" * 80)
+        
+    def run_specific_combinations(self, indices):
+        """运行指定编号的组合"""
+        if not indices:
+            return
+            
+        print(f"🎯 运行指定的 {len(indices)} 个组合")
+        
+        selected_combinations = []
+        for idx in indices:
+            if 1 <= idx <= len(self.param_combinations):
+                selected_combinations.append(self.param_combinations[idx-1])
+                print(f"  {idx}. {self.param_combinations[idx-1]}")
+            else:
+                print(f"⚠️  编号 {idx} 超出范围 (1-{len(self.param_combinations)})")
+        
+        if not selected_combinations:
+            print("❌ 没有有效的组合可运行")
+            return
+            
+        self._run_combinations(selected_combinations)
+    
+    def run_range_combinations(self, start=1, count=None):
+        """运行范围内的组合"""
+        start_idx = start - 1  # 转换为0-based索引
+        if start_idx < 0:
+            start_idx = 0
+            
+        if count:
+            end_idx = min(start_idx + count, len(self.param_combinations))
+            selected_combinations = self.param_combinations[start_idx:end_idx]
+            print(f"🎯 运行第 {start} 到第 {start + len(selected_combinations) - 1} 个组合")
+        else:
+            selected_combinations = self.param_combinations[start_idx:]
+            print(f"🎯 从第 {start} 个组合开始运行到结束")
+            
+        self._run_combinations(selected_combinations)
+    
+    def run_single_combination(self, false_alarm, miss_change, stable_reward, change_reward):
+        """运行单个组合"""
+        combination = (float(false_alarm), float(miss_change), float(stable_reward), float(change_reward))
+        print(f"🎯 运行单个组合: {combination}")
+        self._run_combinations([combination])
+    
+    def _run_combinations(self, combinations):
+        """内部方法：运行指定的组合列表"""
         print("🚀 开始BusinessCost参数测试")
         print("=" * 80)
         
         start_time = time.time()
         
-        # 串行执行每个参数组合
-        for i, params in enumerate(self.param_combinations, 1):
-            num_combinations = len(self.param_combinations)
-            progress_percent = (i / num_combinations) * 100
-            print(f"\n📊 进度: {i}/{num_combinations} "
+        for i, params in enumerate(combinations, 1):
+            progress_percent = (i / len(combinations)) * 100
+            print(f"\n📊 进度: {i}/{len(combinations)} "
                   f"({progress_percent:.1f}%)")
             print(f"🔬 正在测试参数组合: {params}")
             
@@ -248,9 +428,10 @@ class BusinessCostTest:
                 failed_result = {
                     'false_alarm_cost': params[0],
                     'miss_change_cost': params[1],
-                    'correct_reward': params[2],
+                    'stable_correct_reward': params[2],
+                    'change_correct_reward': params[3],
                     'param_signature': (
-                        f"f{params[0]}_m{params[1]}_r{params[2]}"
+                        f"f{params[0]}_m{params[1]}_sr{params[2]}_cr{params[3]}"
                     ),
                     'status': 'failed',
                     'error': str(e),
@@ -261,7 +442,36 @@ class BusinessCostTest:
                 self.results.append(failed_result)
         
         total_time = time.time() - start_time
-        print(f"\n🎉 所有测试完成！总耗时: {total_time/60:.1f}分钟")
+        print(f"\n🎉 测试完成！总耗时: {total_time/60:.1f}分钟")
+
+    def run_all_tests(self):
+        """运行所有参数组合测试（串行版本）"""
+        self._run_combinations(self.param_combinations)
+        
+    def load_existing_results(self, result_file=None):
+        """加载已有的测试结果"""
+        if result_file and os.path.exists(result_file):
+            try:
+                with open(result_file, 'r', encoding='utf-8') as f:
+                    self.results = json.load(f)
+                print(f"✅ 成功加载结果文件: {result_file}")
+                print(f"📊 加载了 {len(self.results)} 个结果")
+                return True
+            except Exception as e:
+                print(f"❌ 加载结果文件失败: {e}")
+                return False
+        else:
+            # 自动寻找最新的结果文件
+            output_dir = "outputs"
+            if os.path.exists(output_dir):
+                json_files = [f for f in os.listdir(output_dir) 
+                            if f.startswith('business_cost_test_') and f.endswith('.json')]
+                if json_files:
+                    latest_file = max(json_files, key=lambda f: os.path.getmtime(os.path.join(output_dir, f)))
+                    return self.load_existing_results(os.path.join(output_dir, latest_file))
+            
+            print("❌ 没有找到已有的结果文件")
+            return False
 
     def save_intermediate_results(self):
         """保存中间结果"""
@@ -299,9 +509,10 @@ class BusinessCostTest:
         for i, (_, row) in enumerate(success_df.iterrows(), 1):
             false_alarm = row['false_alarm_cost']
             miss_change = row['miss_change_cost']
-            correct_reward = row['correct_reward']
+            stable_reward = row['stable_correct_reward']
+            change_reward = row['change_correct_reward']
             
-            print(f"\n{i:2d}. 配置: 参数[误报={false_alarm}, 漏报={miss_change}, 奖励={correct_reward}]")
+            print(f"\n{i:2d}. 配置: 参数[误报={false_alarm}, 漏报={miss_change}, 稳定奖励={stable_reward}, 变化奖励={change_reward}]")
             
             # 从结果中提取评估信息（注意：这些是测试集的结果，不是每轮训练的）
             accuracy = row.get('accuracy', 0.0)
@@ -378,20 +589,87 @@ class BusinessCostTest:
 
 def main():
     """主函数"""
+    args = parse_arguments()
+    
+    # 实用工具命令
+    if args.validate:
+        is_valid, message = validate_single_combination(*args.validate)
+        print(f"验证结果: {message}")
+        if is_valid:
+            print("✅ 参数组合有效")
+            sys.exit(0)
+        else:
+            print("❌ 参数组合无效")
+            sys.exit(1)
+    
+    # 创建测试实例
+    custom_params = None
+    if args.range:
+        custom_params = {}
+        if args.false_alarm:
+            custom_params['false_alarm'] = parse_param_list(args.false_alarm, float)
+        if args.miss_change:
+            custom_params['miss_change'] = parse_param_list(args.miss_change, float)
+        if args.stable_reward:
+            custom_params['stable_reward'] = parse_param_list(args.stable_reward, float)
+        if args.change_reward:
+            custom_params['change_reward'] = parse_param_list(args.change_reward, float)
+    
+    tester = BusinessCostTest(custom_params)
+    
+    # 列出组合命令
+    if args.list_combinations:
+        tester.list_all_combinations()
+        return
+    
+    # 只分析模式
+    if args.analyze_only:
+        if tester.load_existing_results(args.result_file):
+            tester.generate_report()
+        return
+    
     print("🚀 BusinessCost损失函数参数优化测试")
-    print("测试参数:")
-    print("  - 误报成本: [1, 2, 3]")
-    print("  - 漏报成本: [6, 7, 8]") 
-    print("  - 正确奖励: [0.2, 0.3, 0.4]")
-    print("  - 总组合数: 27种")
+    if custom_params:
+        print("自定义参数范围:")
+        if 'false_alarm' in custom_params:
+            print(f"  - 误报成本: {custom_params['false_alarm']}")
+        if 'miss_change' in custom_params:
+            print(f"  - 漏报成本: {custom_params['miss_change']}")
+        if 'stable_reward' in custom_params:
+            print(f"  - 稳定奖励: {custom_params['stable_reward']}")
+        if 'change_reward' in custom_params:
+            print(f"  - 变化奖励: {custom_params['change_reward']}")
+    else:
+        print("默认参数范围:")
+        print("  - 误报成本: [1, 2, 3]")
+        print("  - 漏报成本: [6, 7, 8]") 
+        print("  - 稳定奖励: [0.2, 0.3, 0.4]")
+        print("  - 变化奖励: [0.2, 0.3, 0.4]")
+    
+    print(f"  - 总组合数: {len(tester.param_combinations)}种")
     print("  - 执行方式: 串行")
     print("=" * 60)
     
-    # 创建测试实例
-    tester = BusinessCostTest()
-    
-    # 运行所有测试
-    tester.run_all_tests()
+    # 根据参数选择运行模式
+    if args.single:
+        # 验证单个组合参数
+        is_valid, message = validate_single_combination(*args.single)
+        if not is_valid:
+            print(f"❌ {message}")
+            sys.exit(1)
+        tester.run_single_combination(*args.single)
+    elif args.indices:
+        try:
+            indices = [int(x.strip()) for x in args.indices.split(',')]
+            tester.run_specific_combinations(indices)
+        except ValueError:
+            print("❌ 编号格式错误，请使用逗号分隔的数字 (如: 1,5,10)")
+            sys.exit(1)
+    elif args.count or args.start > 1:
+        tester.run_range_combinations(args.start, args.count)
+    else:
+        # 默认运行所有组合
+        tester.run_all_tests()
     
     # 生成分析报告
     tester.generate_report()
